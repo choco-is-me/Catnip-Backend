@@ -158,6 +158,60 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
+	// Delete user account
+	fastify.delete(
+		"/users/:userId",
+		{
+			schema: {
+				params: ParamsWithUserId,
+			},
+		},
+		async (request: FastifyRequest<{ Params: UserParams }>, reply) => {
+			try {
+				const { userId } = request.params;
+
+				// Start a session for transaction
+				const session = await User.startSession();
+				session.startTransaction();
+
+				try {
+					// Delete all user's cards first
+					await Card.deleteMany({ userId }).session(session);
+
+					// Delete the user
+					const user = await User.findByIdAndDelete(userId).session(
+						session
+					);
+
+					if (!user) {
+						await session.abortTransaction();
+						reply.code(404);
+						return { success: false, error: "User not found" };
+					}
+
+					// If everything is successful, commit the transaction
+					await session.commitTransaction();
+					return {
+						success: true,
+						message:
+							"User account and all associated data have been deleted successfully",
+					};
+				} catch (error) {
+					// If anything fails, abort the transaction
+					await session.abortTransaction();
+					throw error;
+				} finally {
+					// End the session
+					session.endSession();
+				}
+			} catch (err: unknown) {
+				const error = handleError(err);
+				reply.code(error.code || 400);
+				return { success: false, error: error.message };
+			}
+		}
+	);
+
 	// Add card
 	fastify.post(
 		"/users/:userId/cards",
