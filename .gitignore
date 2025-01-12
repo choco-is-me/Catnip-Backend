@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# Environment
+.env
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+coverage/
+
+# Temporary files
+.DS_Store
+*.tmp
+*.temp
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
