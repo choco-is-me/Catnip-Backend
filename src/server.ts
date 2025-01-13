@@ -7,6 +7,7 @@ import { CONFIG } from "./config";
 import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
 import dbPlugin from "./plugins/mongodb";
 import userRoutes from "./routes/v1/users";
+import checkOwnershipPlugin from "./middlewares/checkOwnership";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	const server = Fastify({
@@ -14,6 +15,9 @@ export async function buildServer(): Promise<FastifyInstance> {
 			level: CONFIG.LOG_LEVEL,
 		},
 	}).withTypeProvider<TypeBoxTypeProvider>();
+
+	// Register the ownership middleware
+	await server.register(checkOwnershipPlugin);
 
 	// Add Swagger documentation
 	await server.register(fastifySwagger, swaggerOptions);
