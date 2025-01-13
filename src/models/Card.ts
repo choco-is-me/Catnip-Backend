@@ -1,5 +1,5 @@
-import mongoose, { Document, Schema } from "mongoose";
 import crypto from "crypto";
+import mongoose, { Document, Schema } from "mongoose";
 import { CONFIG } from "../config";
 
 interface ICard extends Document {

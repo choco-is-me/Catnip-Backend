@@ -1,5 +1,5 @@
-import mongoose from "mongoose";
 import { FastifyInstance } from "fastify";
+import mongoose from "mongoose";
 import { CONFIG } from "../config";
 
 export async function connectDB() {

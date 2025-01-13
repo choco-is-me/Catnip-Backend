@@ -1,8 +1,11 @@
-import Fastify, { FastifyInstance } from "fastify";
+import fastifySwagger from "@fastify/swagger";
+import fastifySwaggerUi from "@fastify/swagger-ui";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
-import { CONFIG } from "./config";
-import dbPlugin from "./plugins/mongodb";
+import Fastify, { FastifyInstance } from "fastify";
 import mongoose from "mongoose";
+import { CONFIG } from "./config";
+import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
+import dbPlugin from "./plugins/mongodb";
 import userRoutes from "./routes/v1/users";
 
 export async function buildServer(): Promise<FastifyInstance> {
@@ -12,9 +15,27 @@ export async function buildServer(): Promise<FastifyInstance> {
 		},
 	}).withTypeProvider<TypeBoxTypeProvider>();
 
+	// Add Swagger documentation
+	await server.register(fastifySwagger, swaggerOptions);
+	await server.register(fastifySwaggerUi, swaggerUiOptions);
+
 	// Register plugins
 	await server.register(import("@fastify/cors"), {
 		origin: CONFIG.CORS_ORIGIN,
+	});
+
+	// Add rate limiting
+	await server.register(import("@fastify/rate-limit"), {
+		max: 5,
+		timeWindow: "1 minute",
+		errorResponseBuilder: function (_, context) {
+			return {
+				success: false,
+				error: "Rate Limit Exceeded",
+				message: `Rate limit exceeded, please try again in ${context.after}`,
+				code: 429,
+			};
+		},
 	});
 
 	// Register MongoDB plugin

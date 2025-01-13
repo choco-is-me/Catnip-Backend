@@ -1,5 +1,5 @@
+import { Static, Type } from "@sinclair/typebox";
 import * as dotenv from "dotenv";
-import { Type, Static } from "@sinclair/typebox";
 dotenv.config();
 
 const ConfigSchema = Type.Object({
