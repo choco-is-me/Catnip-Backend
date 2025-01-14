@@ -24,6 +24,7 @@
 	},
 	"homepage": "https://github.com/choco-is-me/Space-Cat-App-Backend#readme",
 	"dependencies": {
+		"@fastify/cookie": "^11.0.2",
 		"@fastify/cors": "^10.0.2",
 		"@fastify/jwt": "^9.0.3",
 		"@fastify/mongodb": "^9.0.2",

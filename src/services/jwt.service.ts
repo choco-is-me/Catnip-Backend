@@ -1,5 +1,6 @@
-import { sign, verify } from "jsonwebtoken";
+// src/services/jwt.service.ts
 import crypto from "crypto";
+import { sign, verify } from "jsonwebtoken";
 import { CONFIG } from "../config";
 
 interface TokenPayload {
@@ -7,32 +8,42 @@ interface TokenPayload {
 	iat?: number;
 }
 
+interface TokenPair {
+	accessToken: string;
+	refreshToken: string;
+}
+
 class JWTService {
 	private static usedTokens = new Set<string>();
+	private static usedRefreshTokens = new Set<string>();
 
-	static generateTokens(userId: string) {
+	static generateTokens(userId: string): TokenPair {
 		try {
 			if (!CONFIG.JWT_SECRET || !CONFIG.JWT_REFRESH_SECRET) {
 				throw new Error("JWT secrets not configured properly");
 			}
 
-			const jti = crypto.randomBytes(32).toString("hex");
+			const accessJti = crypto.randomBytes(32).toString("hex");
+			const refreshJti = crypto.randomBytes(32).toString("hex");
 
-			// Remove jti from payload since we're using it in options
-			const accessToken = sign(
-				{ userId }, // Remove jti from payload
-				CONFIG.JWT_SECRET,
+			const accessToken = sign({ userId }, CONFIG.JWT_SECRET, {
+				expiresIn: CONFIG.JWT_EXPIRES_IN || "15m",
+				algorithm: "HS256",
+				jwtid: accessJti,
+			});
+
+			const refreshToken = sign(
 				{
-					expiresIn: CONFIG.JWT_EXPIRES_IN || "15m",
+					userId,
+					tokenVersion: refreshJti, // Add version to track rotations
+				},
+				CONFIG.JWT_REFRESH_SECRET,
+				{
+					expiresIn: CONFIG.JWT_REFRESH_EXPIRES_IN || "7d",
 					algorithm: "HS256",
-					jwtid: jti, // Keep jti only in options
+					jwtid: refreshJti,
 				}
 			);
-
-			const refreshToken = sign({ userId }, CONFIG.JWT_REFRESH_SECRET, {
-				expiresIn: CONFIG.JWT_REFRESH_EXPIRES_IN || "7d",
-				algorithm: "HS256",
-			});
 
 			return { accessToken, refreshToken };
 		} catch (error) {
@@ -41,7 +52,10 @@ class JWTService {
 		}
 	}
 
-	static verifyToken(token: string, isRefresh = false) {
+	static verifyToken(
+		token: string,
+		isRefresh = false
+	): TokenPayload & { jti: string } {
 		try {
 			if (!CONFIG.JWT_SECRET || !CONFIG.JWT_REFRESH_SECRET) {
 				throw new Error("JWT secrets not configured properly");
@@ -53,10 +67,13 @@ class JWTService {
 				{
 					algorithms: ["HS256"],
 				}
-			) as TokenPayload & { jti?: string }; // Add jti from JWT header
+			) as TokenPayload & { jti: string };
 
-			// Check jti from the token header
-			if (!isRefresh && decoded.jti && this.usedTokens.has(decoded.jti)) {
+			// Check if token has been invalidated
+			const tokenSet = isRefresh
+				? this.usedRefreshTokens
+				: this.usedTokens;
+			if (decoded.jti && tokenSet.has(decoded.jti)) {
 				throw new Error("Token has been invalidated");
 			}
 
@@ -69,9 +86,12 @@ class JWTService {
 		}
 	}
 
-	static invalidateToken(jti: string) {
+	static invalidateToken(jti: string, isRefresh = false): void {
 		try {
-			this.usedTokens.add(jti);
+			const tokenSet = isRefresh
+				? this.usedRefreshTokens
+				: this.usedTokens;
+			tokenSet.add(jti);
 			this.cleanupUsedTokens();
 		} catch (error) {
 			console.error("Token Invalidation Error:", error);
@@ -79,13 +99,28 @@ class JWTService {
 		}
 	}
 
-	private static cleanupUsedTokens() {
-		// Implementation for token cleanup
-		// You might want to periodically clear old tokens
-		// This is a simple implementation
+	static rotateTokens(refreshToken: string): TokenPair {
+		try {
+			// Verify the refresh token
+			const decoded = this.verifyToken(refreshToken, true);
+
+			// Invalidate the used refresh token
+			this.invalidateToken(decoded.jti, true);
+
+			// Generate new token pair
+			return this.generateTokens(decoded.userId);
+		} catch (error) {
+			throw new Error("Failed to rotate tokens");
+		}
+	}
+
+	private static cleanupUsedTokens(): void {
+		// Cleanup logic for both token sets
 		if (this.usedTokens.size > 1000) {
-			// Arbitrary limit
 			this.usedTokens.clear();
+		}
+		if (this.usedRefreshTokens.size > 1000) {
+			this.usedRefreshTokens.clear();
 		}
 	}
 }

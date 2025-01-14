@@ -4,6 +4,7 @@ import mongoose, { Error } from "mongoose";
 import { Card } from "../../models/Card";
 import { User } from "../../models/User";
 import JWTService from "../../services/jwt.service";
+
 // Response schemas for Swagger
 const UserResponseSchema = Type.Object({
 	success: Type.Boolean(),
@@ -118,6 +119,14 @@ export default async function userRoutes(fastify: FastifyInstance) {
 								email: Type.String(),
 								firstName: Type.String(),
 								lastName: Type.String(),
+								company: Type.Optional(Type.String()),
+								address: Type.Object({
+									street: Type.String(),
+									city: Type.String(),
+									province: Type.String(),
+									zipCode: Type.String(),
+								}),
+								phoneNumber: Type.String(),
 							}),
 							tokens: Type.Object({
 								accessToken: Type.String(),
@@ -141,13 +150,18 @@ export default async function userRoutes(fastify: FastifyInstance) {
 			try {
 				const { email, password } = request.body;
 
-				// 1. Input validation
+				// 1. Input validation with improved error messages
 				if (!email || !password) {
 					reply.code(400);
 					return {
 						success: false,
 						error: "Validation Error",
-						message: "Email and password are required",
+						message:
+							!email && !password
+								? "Email and password are required"
+								: !email
+								? "Email is required"
+								: "Password is required",
 						code: 400,
 					};
 				}
@@ -159,6 +173,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
 				// 3. Use timing-safe comparison for security
 				if (!user || !(await user.comparePassword(password))) {
+					// Add a small delay to prevent timing attacks
+					await new Promise((resolve) => setTimeout(resolve, 1000));
 					reply.code(401);
 					return {
 						success: false,
@@ -183,7 +199,16 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					};
 				}
 
-				// 5. Send successful response
+				// 5. Set refresh token in HTTP-only cookie
+				reply.setCookie("refreshToken", tokens.refreshToken, {
+					httpOnly: true,
+					secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+					sameSite: "strict",
+					path: "/api/v1/auth/refresh-token", // Only send to refresh token endpoint
+					maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+				});
+
+				// 6. Send successful response with user data and access token
 				return {
 					success: true,
 					data: {
@@ -192,20 +217,38 @@ export default async function userRoutes(fastify: FastifyInstance) {
 							email: user.email,
 							firstName: user.firstName,
 							lastName: user.lastName,
+							company: user.company,
+							address: {
+								street: user.address.street,
+								city: user.address.city,
+								province: user.address.province,
+								zipCode: user.address.zipCode,
+							},
+							phoneNumber: user.phoneNumber,
 						},
-						tokens,
+						tokens: {
+							accessToken: tokens.accessToken,
+							// Don't send refresh token in response body for security
+							// It's already set in HTTP-only cookie
+							refreshToken: undefined,
+						},
 					},
 				};
 			} catch (err) {
-				// 6. Enhanced error handling
+				// 7. Enhanced error handling with logging
 				const error = handleError(err);
-				console.error("Login Error:", err);
+				console.error("Login Error:", {
+					timestamp: new Date().toISOString(),
+					error: error.message,
+					email: request.body.email, // Log attempted email for monitoring
+				});
+
 				reply.code(error.code || 500);
 				return {
 					success: false,
 					error: error.error,
 					message: error.message,
-					code: error.code || 500, // Always include code in error response
+					code: error.code || 500,
 				};
 			}
 		}
@@ -533,6 +576,14 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				session.startTransaction();
 
 				try {
+					// Extract token for invalidation
+					const authHeader = request.headers.authorization;
+					if (!authHeader || !authHeader.startsWith("Bearer ")) {
+						throw new Error("No token provided");
+					}
+					const token = authHeader.split(" ")[1];
+
+					// Delete associated data
 					await Card.deleteMany({ userId }).session(session);
 					const user = await User.findByIdAndDelete(userId).session(
 						session
@@ -546,6 +597,17 @@ export default async function userRoutes(fastify: FastifyInstance) {
 							error: "Not Found",
 							message: "User not found",
 						};
+					}
+
+					// Verify and invalidate the token
+					try {
+						const decodedToken = JWTService.verifyToken(token);
+						if (decodedToken.jti) {
+							JWTService.invalidateToken(decodedToken.jti);
+						}
+					} catch (tokenError) {
+						console.error("Token Invalidation Error:", tokenError);
+						// Continue with account deletion even if token invalidation fails
 					}
 
 					await session.commitTransaction();

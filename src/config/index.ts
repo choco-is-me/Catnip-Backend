@@ -11,6 +11,7 @@ const ConfigSchema = Type.Object({
 	PORT: Type.Number(),
 	HOST: Type.String(),
 	MONGODB_URI: Type.String(),
+	COOKIE_SECRET: Type.String(),
 	JWT_SECRET: Type.String(),
 	JWT_EXPIRES_IN: Type.String(),
 	JWT_REFRESH_SECRET: Type.String(),
@@ -40,10 +41,11 @@ export const CONFIG: Config = {
 	MONGODB_URI:
 		process.env.MONGODB_URI ||
 		"mongodb+srv://chocoisme:SpaceCatWillNeverFall@spacecatstudio.qphz1.mongodb.net/?retryWrites=true&w=majority&appName=SpaceCatStudio",
-	JWT_SECRET: process.env.JWT_SECRET || "SpaceCatWillNeverFall",
+	COOKIE_SECRET: process.env.COOKIE_SECRET || "SpaceCatWillNeverFallCookie",
+	JWT_SECRET: process.env.JWT_SECRET || "SpaceCatWillNeverFallJWT",
 	JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "15m",
 	JWT_REFRESH_SECRET:
-		process.env.JWT_REFRESH_SECRET || "SpaceCatWillNeverFallRefresh",
+		process.env.JWT_REFRESH_SECRET || "SpaceCatWillNeverFallJWTRefresh",
 	JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 	LOG_LEVEL: process.env.LOG_LEVEL || "info",
 	CORS_ORIGIN: process.env.CORS_ORIGIN || "*",

@@ -1,7 +1,7 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
-import jwt, { JwtPayload } from "jsonwebtoken";
-import { CONFIG } from "../config";
+import { JwtPayload } from "jsonwebtoken";
+import JWTService from "../services/jwt.service";
 
 declare module "fastify" {
 	interface FastifyInstance {
@@ -9,6 +9,10 @@ declare module "fastify" {
 			request: FastifyRequest,
 			reply: FastifyReply
 		) => Promise<void>;
+	}
+	// Add this to ensure request.user has the correct type
+	interface FastifyRequest {
+		user?: JwtPayload & { userId: string; jti: string };
 	}
 }
 
@@ -25,13 +29,16 @@ export default fp(async (fastify) => {
 
 				const token = authHeader.split(" ")[1];
 
-				// Verify token and check algorithm
-				const decoded = jwt.verify(token, CONFIG.JWT_SECRET, {
-					algorithms: ["HS256"],
-				}) as JwtPayload & {
+				// Use JWTService to verify token and assert the type
+				const decoded = JWTService.verifyToken(token) as JwtPayload & {
 					userId: string;
 					jti: string;
 				};
+
+				// Ensure jti exists
+				if (!decoded.jti) {
+					throw new Error("Invalid token format");
+				}
 
 				// Add user info to request
 				request.user = decoded;

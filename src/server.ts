@@ -5,9 +5,12 @@ import Fastify, { FastifyInstance } from "fastify";
 import mongoose from "mongoose";
 import { CONFIG } from "./config";
 import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
-import dbPlugin from "./plugins/mongodb";
-import userRoutes from "./routes/v1/users";
+import authPlugin from "./middlewares/auth";
 import checkOwnershipPlugin from "./middlewares/checkOwnership";
+import dbPlugin from "./plugins/mongodb";
+import authRoutes from "./routes/v1/auth";
+import userRoutes from "./routes/v1/users";
+import cookie from "@fastify/cookie";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	const server = Fastify({
@@ -16,8 +19,20 @@ export async function buildServer(): Promise<FastifyInstance> {
 		},
 	}).withTypeProvider<TypeBoxTypeProvider>();
 
+	// Register the cookie plugin
+	await server.register(cookie, {
+		secret: CONFIG.COOKIE_SECRET,
+		hook: "onRequest",
+	});
+
 	// Register the ownership middleware
 	await server.register(checkOwnershipPlugin);
+
+	// Register the authentication middleware
+	await server.register(authPlugin);
+
+	// Register the auth routes
+	await server.register(authRoutes, { prefix: "/api/v1/auth" });
 
 	// Add Swagger documentation
 	await server.register(fastifySwagger, swaggerOptions);
