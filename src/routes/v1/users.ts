@@ -131,7 +131,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 							}),
 							tokens: Type.Object({
 								accessToken: Type.String(),
-								refreshToken: Type.String(),
+								refreshToken: Type.Optional(Type.String()),
 							}),
 						}),
 					}),
@@ -391,8 +391,12 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
 					// Clear the refresh token cookie
 					reply.clearCookie("refreshToken", {
+						httpOnly: true,
+						secure: CONFIG.COOKIE_SECURE,
+						sameSite: "strict",
 						path: "/api/v1/auth/refresh-token",
-						domain: process.env.COOKIE_DOMAIN || undefined,
+						domain: CONFIG.COOKIE_DOMAIN,
+						partitioned: true, // Keep CHIPS support
 					});
 
 					return {
@@ -608,16 +612,20 @@ export default async function userRoutes(fastify: FastifyInstance) {
 						};
 					}
 
+					reply.clearCookie("refreshToken", {
+						httpOnly: true,
+						secure: CONFIG.COOKIE_SECURE,
+						sameSite: "strict",
+						path: "/api/v1/auth/refresh-token",
+						domain: CONFIG.COOKIE_DOMAIN,
+						partitioned: true, // Keep CHIPS support
+					});
+
 					// Verify and invalidate the token
 					try {
 						const decodedToken = JWTService.verifyToken(token);
 						if (decodedToken.jti) {
 							JWTService.invalidateToken(decodedToken.jti);
-							// Clear the refresh token cookie
-							reply.clearCookie("refreshToken", {
-								path: "/api/v1/auth/refresh-token",
-								domain: process.env.COOKIE_DOMAIN || undefined,
-							});
 						}
 					} catch (tokenError) {
 						console.error("Token Invalidation Error:", tokenError);
