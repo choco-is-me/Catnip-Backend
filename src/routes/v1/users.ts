@@ -1,3 +1,4 @@
+import { CONFIG } from "../../config";
 import { Static, Type } from "@sinclair/typebox";
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import mongoose, { Error } from "mongoose";
@@ -202,10 +203,12 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				// 5. Set refresh token in HTTP-only cookie
 				reply.setCookie("refreshToken", tokens.refreshToken, {
 					httpOnly: true,
-					secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+					secure: CONFIG.COOKIE_SECURE,
 					sameSite: "strict",
-					path: "/api/v1/auth/refresh-token", // Only send to refresh token endpoint
-					maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+					path: "/api/v1/auth/refresh-token",
+					maxAge: CONFIG.COOKIE_MAX_AGE,
+					domain: CONFIG.COOKIE_DOMAIN,
+					partitioned: true, // Add CHIPS support for enhanced privacy
 				});
 
 				// 6. Send successful response with user data and access token
@@ -385,6 +388,12 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
 					// Invalidate the token
 					JWTService.invalidateToken(decodedToken.jti);
+
+					// Clear the refresh token cookie
+					reply.clearCookie("refreshToken", {
+						path: "/api/v1/auth/refresh-token",
+						domain: process.env.COOKIE_DOMAIN || undefined,
+					});
 
 					return {
 						success: true,
@@ -604,6 +613,11 @@ export default async function userRoutes(fastify: FastifyInstance) {
 						const decodedToken = JWTService.verifyToken(token);
 						if (decodedToken.jti) {
 							JWTService.invalidateToken(decodedToken.jti);
+							// Clear the refresh token cookie
+							reply.clearCookie("refreshToken", {
+								path: "/api/v1/auth/refresh-token",
+								domain: process.env.COOKIE_DOMAIN || undefined,
+							});
 						}
 					} catch (tokenError) {
 						console.error("Token Invalidation Error:", tokenError);
