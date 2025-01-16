@@ -1,46 +1,58 @@
 import { Type } from "@sinclair/typebox";
-import { AddressSchema, ResponseWrapper } from "../common";
+import { AddressSchema, ResponseWrapper, Timestamps } from "../common";
 
-// User object schema (without sensitive data)
-export const UserSchema = Type.Object({
-	_id: Type.String(),
-	email: Type.String(),
-	firstName: Type.String(),
-	lastName: Type.String(),
+// Base user fields without sensitive data
+const UserBaseSchema = Type.Object({
+	email: Type.String({ format: "email" }),
+	firstName: Type.String({ minLength: 1 }),
+	lastName: Type.String({ minLength: 1 }),
 	company: Type.Optional(Type.String()),
 	address: AddressSchema,
-	phoneNumber: Type.String(),
-	createdAt: Type.String(),
-	updatedAt: Type.String(),
+	phoneNumber: Type.String({
+		pattern: "^[+]?[(]?[0-9]{3}[)]?[-s.]?[0-9]{3}[-s.]?[0-9]{4,6}$",
+	}),
 });
 
-// User response wrapped in standard response format
+// Complete user schema including system fields
+export const UserSchema = Type.Intersect([
+	Type.Object({
+		_id: Type.String({ format: "uuid" }),
+	}),
+	UserBaseSchema,
+	Type.Object(Timestamps),
+]);
+
+// Parameters schemas
+export const ParamsWithUserId = Type.Object({
+	userId: Type.String({ format: "uuid" }),
+});
+
+// Request body schemas
+export const CreateUserBody = Type.Intersect([
+	UserBaseSchema,
+	Type.Object({
+		password: Type.String({
+			minLength: 8,
+			pattern:
+				"^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$",
+		}),
+	}),
+]);
+
+export const UpdateUserBody = Type.Partial(UserBaseSchema);
+
+// Response schemas
 export const UserResponseSchema = ResponseWrapper(
 	Type.Object({
 		user: UserSchema,
 	})
 );
 
-// Parameters
-export const ParamsWithUserId = Type.Object({
-	userId: Type.String(),
-});
-
-// Request Bodies
-export const CreateUserBody = Type.Object({
-	email: Type.String({ format: "email" }),
-	password: Type.String({ minLength: 8 }),
-	firstName: Type.String(),
-	lastName: Type.String(),
-	company: Type.Optional(Type.String()),
-	address: AddressSchema,
-	phoneNumber: Type.String(),
-});
-
-export const UpdateUserBody = Type.Object({
-	firstName: Type.Optional(Type.String()),
-	lastName: Type.Optional(Type.String()),
-	company: Type.Optional(Type.String()),
-	address: Type.Optional(AddressSchema),
-	phoneNumber: Type.Optional(Type.String()),
-});
+export const UsersResponseSchema = ResponseWrapper(
+	Type.Object({
+		users: Type.Array(UserSchema),
+		total: Type.Integer(),
+		page: Type.Integer(),
+		totalPages: Type.Integer(),
+	})
+);

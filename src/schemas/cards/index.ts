@@ -1,30 +1,47 @@
 import { Type } from "@sinclair/typebox";
-import { ResponseWrapper } from "../common";
+import { ResponseWrapper, Timestamps } from "../common";
 import { ParamsWithUserId } from "../users";
 
-export const CardSchema = Type.Object({
-	_id: Type.String(),
-	cardNumber: Type.String(),
-	expirationDate: Type.String(),
-	nameOnCard: Type.String(),
-	isDefault: Type.Boolean(),
-	userId: Type.String(),
-	createdAt: Type.String(),
-	updatedAt: Type.String(),
-});
-
-export const ParamsWithUserIdAndCardId = Type.Object({
-	...ParamsWithUserId.properties,
-	cardId: Type.String(),
-});
-
-export const CreateCardBody = Type.Object({
-	cardNumber: Type.String(),
-	expirationDate: Type.String(),
-	nameOnCard: Type.String(),
+// Base card fields
+const CardBaseSchema = Type.Object({
+	cardNumber: Type.String({
+		pattern: "^[0-9]{16}$",
+		transform: ["trim"],
+	}),
+	expirationDate: Type.String({
+		pattern: "^(0[1-9]|1[0-2])/[0-9]{2}$",
+	}),
+	nameOnCard: Type.String({
+		minLength: 1,
+		transform: ["trim", "toUpperCase"],
+	}),
 	isDefault: Type.Optional(Type.Boolean()),
 });
 
+// Complete card schema including system fields
+export const CardSchema = Type.Intersect([
+	Type.Object({
+		_id: Type.String({ format: "uuid" }),
+		userId: Type.String({ format: "uuid" }),
+	}),
+	CardBaseSchema,
+	Type.Object(Timestamps),
+]);
+
+// Parameters
+export const ParamsWithUserIdAndCardId = Type.Intersect([
+	ParamsWithUserId,
+	Type.Object({
+		cardId: Type.String({ format: "uuid" }),
+	}),
+]);
+
+// Request schemas
+export const CreateCardBody = CardBaseSchema;
+
+export const UpdateCardBody = Type.Partial(CardBaseSchema);
+
+// Response schemas
 export const CardResponseSchema = ResponseWrapper(
 	Type.Object({
 		card: CardSchema,
@@ -34,5 +51,6 @@ export const CardResponseSchema = ResponseWrapper(
 export const CardsResponseSchema = ResponseWrapper(
 	Type.Object({
 		cards: Type.Array(CardSchema),
+		total: Type.Integer(),
 	})
 );

@@ -1,6 +1,6 @@
 import { Static, Type } from "@sinclair/typebox";
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import mongoose, { Error } from "mongoose";
+import mongoose from "mongoose";
 import { CONFIG } from "../../config";
 import { Card } from "../../models/Card";
 import { User } from "../../models/User";
@@ -10,17 +10,18 @@ import { handleError } from "../../utils/error-handler";
 import {
 	CardResponseSchema,
 	CardsResponseSchema,
-	// Card schemas
 	CreateCardBody,
-	// User schemas
 	CreateUserBody,
-	// Common schemas
 	ErrorResponseSchema,
-	// Auth schemas
 	LoginRequestBody,
 	LoginResponseSchema,
+	LogoutResponseSchema,
+	PaginationQuery,
 	ParamsWithUserId,
 	ParamsWithUserIdAndCardId,
+
+	// Common schemas
+	ResponseWrapper,
 	UpdateUserBody,
 	UserResponseSchema,
 } from "../../schemas";
@@ -31,9 +32,9 @@ type UserAndCardParams = Static<typeof ParamsWithUserIdAndCardId>;
 type CreateUserRequest = Static<typeof CreateUserBody>;
 type UpdateUserRequest = Static<typeof UpdateUserBody>;
 type CreateCardRequest = Static<typeof CreateCardBody>;
+type LoginRequest = Static<typeof LoginRequestBody>;
 
 export default async function userRoutes(fastify: FastifyInstance) {
-	// Create reusable auth hook
 	const authenticateHook = async (
 		request: FastifyRequest,
 		reply: FastifyReply
@@ -42,7 +43,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 	};
 
 	// Login Route
-	fastify.post(
+	fastify.post<{ Body: LoginRequest }>(
 		"/users/login",
 		{
 			schema: {
@@ -58,16 +59,10 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				},
 			},
 		},
-		async (
-			request: FastifyRequest<{
-				Body: Static<typeof LoginRequestBody>;
-			}>,
-			reply
-		) => {
+		async (request, reply) => {
 			try {
 				const { email, password } = request.body;
 
-				// 1. Input validation with improved error messages
 				if (!email || !password) {
 					reply.code(400);
 					return {
@@ -83,14 +78,11 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					};
 				}
 
-				// 2. Find user with case-insensitive email search
 				const user = await User.findOne({
 					email: { $regex: new RegExp(`^${email}$`, "i") },
 				});
 
-				// 3. Use timing-safe comparison for security
 				if (!user || !(await user.comparePassword(password))) {
-					// Add a small delay to prevent timing attacks
 					await new Promise((resolve) => setTimeout(resolve, 1000));
 					reply.code(401);
 					return {
@@ -101,22 +93,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					};
 				}
 
-				// 4. Generate tokens with better error handling
-				let tokens;
-				try {
-					tokens = JWTService.generateTokens(user._id.toString());
-				} catch (tokenError) {
-					console.error("Token Generation Error:", tokenError);
-					reply.code(500);
-					return {
-						success: false,
-						error: "Authentication Error",
-						message: "Failed to generate authentication tokens",
-						code: 500,
-					};
-				}
+				const tokens = JWTService.generateTokens(user._id.toString());
 
-				// 5. Set refresh token in HTTP-only cookie
 				reply.setCookie("refreshToken", tokens.refreshToken, {
 					httpOnly: true,
 					secure: CONFIG.COOKIE_SECURE,
@@ -124,10 +102,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					path: "/api/v1/auth/refresh-token",
 					maxAge: CONFIG.COOKIE_MAX_AGE,
 					domain: CONFIG.COOKIE_DOMAIN,
-					partitioned: true, // Add CHIPS support for enhanced privacy
+					partitioned: true,
 				});
 
-				// 6. Send successful response with user data and access token
 				return {
 					success: true,
 					data: {
@@ -137,31 +114,16 @@ export default async function userRoutes(fastify: FastifyInstance) {
 							firstName: user.firstName,
 							lastName: user.lastName,
 							company: user.company,
-							address: {
-								street: user.address.street,
-								city: user.address.city,
-								province: user.address.province,
-								zipCode: user.address.zipCode,
-							},
+							address: user.address,
 							phoneNumber: user.phoneNumber,
 						},
 						tokens: {
 							accessToken: tokens.accessToken,
-							// Don't send refresh token in response body for security
-							// It's already set in HTTP-only cookie
-							refreshToken: undefined,
 						},
 					},
 				};
 			} catch (err) {
-				// 7. Enhanced error handling with logging
 				const error = handleError(err);
-				console.error("Login Error:", {
-					timestamp: new Date().toISOString(),
-					error: error.message,
-					email: request.body.email, // Log attempted email for monitoring
-				});
-
 				reply.code(error.code || 500);
 				return {
 					success: false,
@@ -173,8 +135,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Register user
-	fastify.post(
+	// Register Route
+	fastify.post<{ Body: CreateUserRequest }>(
 		"/users/register",
 		{
 			schema: {
@@ -184,18 +146,15 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				response: {
 					201: UserResponseSchema,
 					400: ErrorResponseSchema,
-					429: ErrorResponseSchema,
+					409: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
-		async (request: FastifyRequest<{ Body: CreateUserRequest }>, reply) => {
+		async (request, reply) => {
 			try {
-				const userData = request.body;
-
-				// Check if user exists
 				const existingUser = await User.findOne({
-					email: userData.email,
+					email: request.body.email,
 				});
 				if (existingUser) {
 					reply.code(409);
@@ -203,10 +162,11 @@ export default async function userRoutes(fastify: FastifyInstance) {
 						success: false,
 						error: "Duplicate Error",
 						message: "Email already registered",
+						code: 409,
 					};
 				}
 
-				const user = new User(userData);
+				const user = new User(request.body);
 				await user.save();
 
 				reply.code(201);
@@ -218,6 +178,11 @@ export default async function userRoutes(fastify: FastifyInstance) {
 							email: user.email,
 							firstName: user.firstName,
 							lastName: user.lastName,
+							company: user.company,
+							address: user.address,
+							phoneNumber: user.phoneNumber,
+							createdAt: user.createdAt,
+							updatedAt: user.updatedAt,
 						},
 					},
 				};
@@ -234,9 +199,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Protected Routes (Require Authentication)
-
-	// Logout
+	// Protected Routes
 	fastify.post(
 		"/users/logout",
 		{
@@ -245,81 +208,58 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				tags: ["Auth"],
 				description: "Logout user",
 				response: {
-					200: Type.Object({
-						success: Type.Boolean(),
-						message: Type.String(),
-					}),
+					200: LogoutResponseSchema,
 					401: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
-		async (request: FastifyRequest, reply) => {
+		async (request, reply) => {
 			try {
-				// Check if user exists in request (set by authenticateHook)
 				if (!request.user) {
 					reply.code(401);
 					return {
 						success: false,
 						error: "Authentication Failed",
 						message: "Invalid token",
+						code: 401,
 					};
 				}
 
-				// Extract token from Authorization header
 				const authHeader = request.headers.authorization;
-				if (!authHeader || !authHeader.startsWith("Bearer ")) {
+				if (!authHeader?.startsWith("Bearer ")) {
 					reply.code(401);
 					return {
 						success: false,
 						error: "Authentication Failed",
 						message: "No token provided",
+						code: 401,
 					};
 				}
 
 				const token = authHeader.split(" ")[1];
+				const decodedToken = JWTService.verifyToken(token);
 
-				try {
-					// Verify and decode the token to get the jti
-					const decodedToken = JWTService.verifyToken(token);
-
-					if (!decodedToken.jti) {
-						reply.code(401);
-						return {
-							success: false,
-							error: "Authentication Failed",
-							message: "Invalid token format",
-						};
-					}
-
-					// Invalidate the token
+				if (decodedToken.jti) {
 					JWTService.invalidateToken(decodedToken.jti);
-
-					// Clear the refresh token cookie
-					reply.clearCookie("refreshToken", {
-						httpOnly: true,
-						secure: CONFIG.COOKIE_SECURE,
-						sameSite: "strict",
-						path: "/api/v1/auth/refresh-token",
-						domain: CONFIG.COOKIE_DOMAIN,
-						partitioned: true, // Keep CHIPS support
-					});
-
-					return {
-						success: true,
-						message: "Logged out successfully",
-					};
-				} catch (tokenError) {
-					console.error("Token Verification Error:", tokenError);
-					reply.code(401);
-					return {
-						success: false,
-						error: "Authentication Failed",
-						message: "Invalid or expired token",
-					};
 				}
+
+				reply.clearCookie("refreshToken", {
+					httpOnly: true,
+					secure: CONFIG.COOKIE_SECURE,
+					sameSite: "strict",
+					path: "/api/v1/auth/refresh-token",
+					domain: CONFIG.COOKIE_DOMAIN,
+					partitioned: true,
+				});
+
+				return {
+					success: true,
+					data: {
+						message: "Logged out successfully",
+					},
+				};
 			} catch (err) {
-				console.error("Logout Error:", err);
 				const error = handleError(err);
 				reply.code(error.code || 500);
 				return {
@@ -332,8 +272,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Get user profile
-	fastify.get(
+	// Get User Profile
+	fastify.get<{ Params: UserParams }>(
 		"/users/:userId",
 		{
 			onRequest: [authenticateHook],
@@ -344,36 +284,35 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				response: {
 					200: UserResponseSchema,
 					404: ErrorResponseSchema,
-					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
-		async (request: FastifyRequest<{ Params: UserParams }>, reply) => {
+		async (request, reply) => {
 			try {
-				// Check ownership before proceeding
 				const hasPermission = await fastify.checkOwnership(
 					request,
 					reply
 				);
 				if (!hasPermission) return;
 
-				const { userId } = request.params;
-				const user = await User.findById(userId).select("-password");
-
+				const user = await User.findById(request.params.userId).select(
+					"-password"
+				);
 				if (!user) {
 					reply.code(404);
 					return {
 						success: false,
 						error: "Not Found",
 						message: "User not found",
+						code: 404,
 					};
 				}
 
 				return { success: true, data: { user } };
-			} catch (err: unknown) {
+			} catch (err) {
 				const error = handleError(err);
-				reply.code(error.code || 400);
+				reply.code(error.code || 500);
 				return {
 					success: false,
 					error: error.error,
@@ -384,37 +323,28 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Update user profile
-	fastify.put(
+	// Update User Profile
+	fastify.put<{ Params: UserParams; Body: UpdateUserRequest }>(
 		"/users/:userId",
 		{
 			onRequest: [authenticateHook],
 			schema: {
 				tags: ["Users"],
-				description: "Update user profile information",
+				description: "Update user profile",
 				params: ParamsWithUserId,
 				body: UpdateUserBody,
 				response: {
 					200: UserResponseSchema,
 					404: ErrorResponseSchema,
-					400: ErrorResponseSchema,
-					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
-		async (
-			request: FastifyRequest<{
-				Params: UserParams;
-				Body: UpdateUserRequest;
-			}>,
-			reply
-		) => {
+		async (request, reply) => {
 			const session = await mongoose.startSession();
 			session.startTransaction();
 
 			try {
-				// Check ownership before proceeding
 				const hasPermission = await fastify.checkOwnership(
 					request,
 					reply
@@ -424,12 +354,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					return;
 				}
 
-				const { userId } = request.params;
-				const updateData = request.body;
-
 				const user = await User.findByIdAndUpdate(
-					userId,
-					{ $set: updateData },
+					request.params.userId,
+					{ $set: request.body },
 					{ new: true, session }
 				).select("-password");
 
@@ -440,15 +367,16 @@ export default async function userRoutes(fastify: FastifyInstance) {
 						success: false,
 						error: "Not Found",
 						message: "User not found",
+						code: 404,
 					};
 				}
 
 				await session.commitTransaction();
 				return { success: true, data: { user } };
-			} catch (err: unknown) {
+			} catch (err) {
 				await session.abortTransaction();
 				const error = handleError(err);
-				reply.code(error.code || 400);
+				reply.code(error.code || 500);
 				return {
 					success: false,
 					error: error.error,
@@ -461,109 +389,96 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Delete user account
-	fastify.delete(
+	// Delete User Account
+	fastify.delete<{ Params: UserParams }>(
 		"/users/:userId",
 		{
 			onRequest: [authenticateHook],
 			schema: {
 				tags: ["Users"],
-				description: "Delete user account and all associated data",
+				description: "Delete user account",
 				params: ParamsWithUserId,
 				response: {
-					200: Type.Object({
-						success: Type.Boolean(),
-						message: Type.String(),
-					}),
+					200: LogoutResponseSchema,
 					404: ErrorResponseSchema,
-					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
-		async (request: FastifyRequest<{ Params: UserParams }>, reply) => {
+		async (request, reply) => {
+			const session = await mongoose.startSession();
+			session.startTransaction();
+
 			try {
-				// Check ownership before proceeding
 				const hasPermission = await fastify.checkOwnership(
 					request,
 					reply
 				);
-				if (!hasPermission) return;
+				if (!hasPermission) {
+					await session.abortTransaction();
+					return;
+				}
 
 				const { userId } = request.params;
-				const session = await User.startSession();
-				session.startTransaction();
 
-				try {
-					// Extract token for invalidation
-					const authHeader = request.headers.authorization;
-					if (!authHeader || !authHeader.startsWith("Bearer ")) {
-						throw new Error("No token provided");
-					}
-					const token = authHeader.split(" ")[1];
+				await Card.deleteMany({ userId }).session(session);
+				const user = await User.findByIdAndDelete(userId).session(
+					session
+				);
 
-					// Delete associated data
-					await Card.deleteMany({ userId }).session(session);
-					const user = await User.findByIdAndDelete(userId).session(
-						session
-					);
-
-					if (!user) {
-						await session.abortTransaction();
-						reply.code(404);
-						return {
-							success: false,
-							error: "Not Found",
-							message: "User not found",
-						};
-					}
-
-					reply.clearCookie("refreshToken", {
-						httpOnly: true,
-						secure: CONFIG.COOKIE_SECURE,
-						sameSite: "strict",
-						path: "/api/v1/auth/refresh-token",
-						domain: CONFIG.COOKIE_DOMAIN,
-						partitioned: true, // Keep CHIPS support
-					});
-
-					// Verify and invalidate the token
-					try {
-						const decodedToken = JWTService.verifyToken(token);
-						if (decodedToken.jti) {
-							JWTService.invalidateToken(decodedToken.jti);
-						}
-					} catch (tokenError) {
-						console.error("Token Invalidation Error:", tokenError);
-						// Continue with account deletion even if token invalidation fails
-					}
-
-					await session.commitTransaction();
-					return {
-						success: true,
-						message:
-							"User account and all associated data have been deleted successfully",
-					};
-				} catch (error) {
+				if (!user) {
 					await session.abortTransaction();
-					throw error;
-				} finally {
-					session.endSession();
+					reply.code(404);
+					return {
+						success: false,
+						error: "Not Found",
+						message: "User not found",
+						code: 404,
+					};
 				}
-			} catch (err: unknown) {
+
+				const authHeader = request.headers.authorization;
+				if (authHeader?.startsWith("Bearer ")) {
+					const token = authHeader.split(" ")[1];
+					const decodedToken = JWTService.verifyToken(token);
+					if (decodedToken.jti) {
+						JWTService.invalidateToken(decodedToken.jti);
+					}
+				}
+
+				reply.clearCookie("refreshToken", {
+					httpOnly: true,
+					secure: CONFIG.COOKIE_SECURE,
+					sameSite: "strict",
+					path: "/api/v1/auth/refresh-token",
+					domain: CONFIG.COOKIE_DOMAIN,
+					partitioned: true,
+				});
+
+				await session.commitTransaction();
+				return {
+					success: true,
+					data: {
+						message: "User account deleted successfully",
+					},
+				};
+			} catch (err) {
+				await session.abortTransaction();
 				const error = handleError(err);
-				reply.code(error.code || 400);
+				reply.code(error.code || 500);
 				return {
 					success: false,
 					error: error.error,
 					message: error.message,
 					code: error.code,
 				};
+			} finally {
+				session.endSession();
 			}
 		}
 	);
 
-	// Add card
+	// Add card route
 	fastify.post(
 		"/users/:userId/cards",
 		{
@@ -575,8 +490,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				body: CreateCardBody,
 				response: {
 					201: CardResponseSchema,
-					404: ErrorResponseSchema,
 					400: ErrorResponseSchema,
+					404: ErrorResponseSchema,
 					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
@@ -584,8 +499,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		},
 		async (
 			request: FastifyRequest<{
-				Params: UserParams;
-				Body: CreateCardRequest;
+				Params: Static<typeof ParamsWithUserId>;
+				Body: Static<typeof CreateCardBody>;
 			}>,
 			reply
 		) => {
@@ -596,6 +511,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				const { userId } = request.params;
 				const cardData = request.body;
 
+				// Check if user exists
 				const user = await User.findById(userId).session(session);
 				if (!user) {
 					await session.abortTransaction();
@@ -604,26 +520,44 @@ export default async function userRoutes(fastify: FastifyInstance) {
 						success: false,
 						error: "Not Found",
 						message: "User not found",
+						code: 404,
 					};
 				}
 
+				// Create new card with sanitized data
 				const newCard = new Card({
 					...cardData,
 					userId,
+					nameOnCard: cardData.nameOnCard.trim().toUpperCase(),
+					cardNumber: cardData.cardNumber.trim(),
 				});
+
 				await newCard.save({ session });
 
-				// If this is a default card, update other cards
+				// Update default status of other cards if needed
 				if (cardData.isDefault) {
 					await Card.updateMany(
-						{ userId, _id: { $ne: newCard._id } },
+						{
+							userId,
+							_id: { $ne: newCard._id },
+							isDefault: true,
+						},
 						{ isDefault: false }
 					).session(session);
 				}
 
 				await session.commitTransaction();
 				reply.code(201);
-				return { success: true, data: { card: newCard } };
+				return {
+					success: true,
+					data: {
+						card: {
+							...newCard.toObject(),
+							createdAt: newCard.createdAt.toISOString(),
+							updatedAt: newCard.updatedAt.toISOString(),
+						},
+					},
+				};
 			} catch (err) {
 				await session.abortTransaction();
 				const error = handleError(err);
@@ -640,7 +574,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Get user's cards
+	// Get user's cards route
 	fastify.get(
 		"/users/:userId/cards",
 		{
@@ -649,15 +583,23 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				tags: ["Cards"],
 				description: "Get all cards associated with a user",
 				params: ParamsWithUserId,
+				querystring: PaginationQuery,
 				response: {
 					200: CardsResponseSchema,
 					400: ErrorResponseSchema,
+					404: ErrorResponseSchema,
 					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
-		async (request: FastifyRequest<{ Params: UserParams }>, reply) => {
+		async (
+			request: FastifyRequest<{
+				Params: Static<typeof ParamsWithUserId>;
+				Querystring: Static<typeof PaginationQuery>;
+			}>,
+			reply
+		) => {
 			try {
 				// Check ownership before proceeding
 				const hasPermission = await fastify.checkOwnership(
@@ -667,9 +609,32 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				if (!hasPermission) return;
 
 				const { userId } = request.params;
-				const cards = await Card.find({ userId });
-				return { success: true, data: { cards } };
-			} catch (err: unknown) {
+				const {
+					page = 1,
+					limit = 10,
+					sortBy = "createdAt",
+					order = "desc",
+				} = request.query;
+
+				const [cards, total] = await Promise.all([
+					Card.find({ userId })
+						.sort({ [sortBy]: order === "desc" ? -1 : 1 })
+						.skip((page - 1) * limit)
+						.limit(limit)
+						.lean(),
+					Card.countDocuments({ userId }),
+				]);
+
+				return {
+					success: true,
+					data: {
+						cards,
+						total,
+						page,
+						totalPages: Math.ceil(total / limit),
+					},
+				};
+			} catch (err) {
 				const error = handleError(err);
 				reply.code(error.code || 400);
 				return {
@@ -682,7 +647,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 
-	// Delete card
+	// Delete card route
 	fastify.delete(
 		"/users/:userId/cards/:cardId",
 		{
@@ -692,19 +657,22 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				description: "Delete a specific card from user account",
 				params: ParamsWithUserIdAndCardId,
 				response: {
-					200: Type.Object({
-						success: Type.Boolean(),
-						message: Type.String(),
-					}),
-					404: ErrorResponseSchema,
+					200: ResponseWrapper(
+						Type.Object({
+							message: Type.Literal("Card deleted successfully"),
+						})
+					),
 					400: ErrorResponseSchema,
+					404: ErrorResponseSchema,
 					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
 				},
 			},
 		},
 		async (
-			request: FastifyRequest<{ Params: UserAndCardParams }>,
+			request: FastifyRequest<{
+				Params: Static<typeof ParamsWithUserIdAndCardId>;
+			}>,
 			reply
 		) => {
 			const session = await mongoose.startSession();
@@ -723,7 +691,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
 				const { userId, cardId } = request.params;
 
-				// Find the card first to check if it was default
+				// Find the card to check if it exists and if it was default
 				const card = await Card.findOne({
 					_id: cardId,
 					userId,
@@ -736,6 +704,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 						success: false,
 						error: "Not Found",
 						message: "Card not found",
+						code: 404,
 					};
 				}
 
@@ -745,11 +714,12 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					userId,
 				}).session(session);
 
-				// If this was a default card, set another card as default if available
+				// If this was a default card, set another card as default
 				if (card.isDefault) {
-					const anotherCard = await Card.findOne({ userId }).session(
-						session
-					);
+					const anotherCard = await Card.findOne({ userId })
+						.sort({ createdAt: -1 })
+						.session(session);
+
 					if (anotherCard) {
 						await Card.findByIdAndUpdate(
 							anotherCard._id,
@@ -762,9 +732,11 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				await session.commitTransaction();
 				return {
 					success: true,
-					message: "Card deleted successfully",
+					data: {
+						message: "Card deleted successfully",
+					},
 				};
-			} catch (err: unknown) {
+			} catch (err) {
 				await session.abortTransaction();
 				const error = handleError(err);
 				reply.code(error.code || 400);
