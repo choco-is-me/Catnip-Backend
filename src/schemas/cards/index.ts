@@ -6,14 +6,12 @@ import { ParamsWithUserId } from "../users";
 const CardBaseSchema = Type.Object({
 	cardNumber: Type.String({
 		pattern: "^[0-9]{16}$",
-		transform: ["trim"],
 	}),
 	expirationDate: Type.String({
 		pattern: "^(0[1-9]|1[0-2])/[0-9]{2}$",
 	}),
 	nameOnCard: Type.String({
 		minLength: 1,
-		transform: ["trim", "toUpperCase"],
 	}),
 	isDefault: Type.Optional(Type.Boolean()),
 });
@@ -21,8 +19,14 @@ const CardBaseSchema = Type.Object({
 // Complete card schema including system fields
 export const CardSchema = Type.Intersect([
 	Type.Object({
-		_id: Type.String({ format: "uuid" }),
-		userId: Type.String({ format: "uuid" }),
+		_id: Type.String({
+			pattern: "^[0-9a-fA-F]{24}$",
+			description: "MongoDB ObjectId",
+		}),
+		userId: Type.String({
+			pattern: "^[0-9a-fA-F]{24}$",
+			description: "MongoDB ObjectId",
+		}),
 	}),
 	CardBaseSchema,
 	Type.Object(Timestamps),
@@ -32,7 +36,10 @@ export const CardSchema = Type.Intersect([
 export const ParamsWithUserIdAndCardId = Type.Intersect([
 	ParamsWithUserId,
 	Type.Object({
-		cardId: Type.String({ format: "uuid" }),
+		cardId: Type.String({
+			pattern: "^[0-9a-fA-F]{24}$",
+			description: "MongoDB ObjectId",
+		}),
 	}),
 ]);
 

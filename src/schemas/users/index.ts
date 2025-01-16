@@ -16,7 +16,10 @@ const UserBaseSchema = Type.Object({
 // Complete user schema including system fields
 export const UserSchema = Type.Intersect([
 	Type.Object({
-		_id: Type.String({ format: "uuid" }),
+		_id: Type.String({
+			pattern: "^[0-9a-fA-F]{24}$",
+			description: "MongoDB ObjectId",
+		}),
 	}),
 	UserBaseSchema,
 	Type.Object(Timestamps),
@@ -24,7 +27,11 @@ export const UserSchema = Type.Intersect([
 
 // Parameters schemas
 export const ParamsWithUserId = Type.Object({
-	userId: Type.String({ format: "uuid" }),
+	userId: Type.String({
+		// MongoDB ObjectId is a 24-character hex string
+		pattern: "^[0-9a-fA-F]{24}$",
+		description: "MongoDB ObjectId",
+	}),
 });
 
 // Request body schemas
