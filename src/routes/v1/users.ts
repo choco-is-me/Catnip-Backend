@@ -1,88 +1,29 @@
-import { CONFIG } from "../../config";
 import { Static, Type } from "@sinclair/typebox";
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import mongoose, { Error } from "mongoose";
+import { CONFIG } from "../../config";
 import { Card } from "../../models/Card";
 import { User } from "../../models/User";
 import JWTService from "../../services/jwt.service";
+import { handleError } from "../../utils/error-handler";
 
-// Response schemas for Swagger
-const UserResponseSchema = Type.Object({
-	success: Type.Boolean(),
-	data: Type.Object({
-		user: Type.Object({
-			_id: Type.String(),
-			email: Type.String(),
-			firstName: Type.String(),
-			lastName: Type.String(),
-			company: Type.Optional(Type.String()),
-			address: Type.Object({
-				street: Type.String(),
-				city: Type.String(),
-				province: Type.String(),
-				zipCode: Type.String(),
-			}),
-			phoneNumber: Type.String(),
-			createdAt: Type.String(),
-			updatedAt: Type.String(),
-		}),
-	}),
-});
-
-const ErrorResponseSchema = Type.Object({
-	success: Type.Boolean(),
-	code: Type.Optional(Type.Number()),
-	error: Type.String(),
-	message: Type.String(),
-});
-
-// Parameter types
-const ParamsWithUserId = Type.Object({
-	userId: Type.String(),
-});
-
-const ParamsWithUserIdAndCardId = Type.Object({
-	userId: Type.String(),
-	cardId: Type.String(),
-});
-
-// Request body types
-const CreateUserBody = Type.Object({
-	email: Type.String({ format: "email" }),
-	password: Type.String({ minLength: 8 }),
-	firstName: Type.String(),
-	lastName: Type.String(),
-	company: Type.Optional(Type.String()),
-	address: Type.Object({
-		street: Type.String(),
-		city: Type.String(),
-		province: Type.String(),
-		zipCode: Type.String(),
-	}),
-	phoneNumber: Type.String(),
-});
-
-const UpdateUserBody = Type.Object({
-	firstName: Type.Optional(Type.String()),
-	lastName: Type.Optional(Type.String()),
-	company: Type.Optional(Type.String()),
-	address: Type.Optional(
-		Type.Object({
-			street: Type.String(),
-			city: Type.String(),
-			province: Type.String(),
-			zipCode: Type.String(),
-		})
-	),
-	phoneNumber: Type.Optional(Type.String()),
-});
-
-const CreateCardBody = Type.Object({
-	cardNumber: Type.String(),
-	expirationDate: Type.String(),
-	nameOnCard: Type.String(),
-	isDefault: Type.Optional(Type.Boolean()),
-});
+import {
+	CardResponseSchema,
+	CardsResponseSchema,
+	// Card schemas
+	CreateCardBody,
+	// User schemas
+	CreateUserBody,
+	// Common schemas
+	ErrorResponseSchema,
+	// Auth schemas
+	LoginRequestBody,
+	LoginResponseSchema,
+	ParamsWithUserId,
+	ParamsWithUserIdAndCardId,
+	UpdateUserBody,
+	UserResponseSchema,
+} from "../../schemas";
 
 // Type definitions
 type UserParams = Static<typeof ParamsWithUserId>;
@@ -107,34 +48,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
 			schema: {
 				tags: ["Auth"],
 				description: "User login",
-				body: Type.Object({
-					email: Type.String({ format: "email" }),
-					password: Type.String(),
-				}),
+				body: LoginRequestBody,
 				response: {
-					200: Type.Object({
-						success: Type.Boolean(),
-						data: Type.Object({
-							user: Type.Object({
-								_id: Type.String(),
-								email: Type.String(),
-								firstName: Type.String(),
-								lastName: Type.String(),
-								company: Type.Optional(Type.String()),
-								address: Type.Object({
-									street: Type.String(),
-									city: Type.String(),
-									province: Type.String(),
-									zipCode: Type.String(),
-								}),
-								phoneNumber: Type.String(),
-							}),
-							tokens: Type.Object({
-								accessToken: Type.String(),
-								refreshToken: Type.Optional(Type.String()),
-							}),
-						}),
-					}),
+					200: LoginResponseSchema,
 					400: ErrorResponseSchema,
 					401: ErrorResponseSchema,
 					429: ErrorResponseSchema,
@@ -144,7 +60,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		},
 		async (
 			request: FastifyRequest<{
-				Body: { email: string; password: string };
+				Body: Static<typeof LoginRequestBody>;
 			}>,
 			reply
 		) => {
@@ -266,17 +182,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				description: "Create a new user account",
 				body: CreateUserBody,
 				response: {
-					201: Type.Object({
-						success: Type.Boolean(),
-						data: Type.Object({
-							user: Type.Object({
-								_id: Type.String(),
-								email: Type.String(),
-								firstName: Type.String(),
-								lastName: Type.String(),
-							}),
-						}),
-					}),
+					201: UserResponseSchema,
 					400: ErrorResponseSchema,
 					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
@@ -668,21 +574,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				params: ParamsWithUserId,
 				body: CreateCardBody,
 				response: {
-					201: Type.Object({
-						success: Type.Boolean(),
-						data: Type.Object({
-							card: Type.Object({
-								_id: Type.String(),
-								cardNumber: Type.String(),
-								expirationDate: Type.String(),
-								nameOnCard: Type.String(),
-								isDefault: Type.Boolean(),
-								userId: Type.String(),
-								createdAt: Type.String(),
-								updatedAt: Type.String(),
-							}),
-						}),
-					}),
+					201: CardResponseSchema,
 					404: ErrorResponseSchema,
 					400: ErrorResponseSchema,
 					429: ErrorResponseSchema,
@@ -758,23 +650,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
 				description: "Get all cards associated with a user",
 				params: ParamsWithUserId,
 				response: {
-					200: Type.Object({
-						success: Type.Boolean(),
-						data: Type.Object({
-							cards: Type.Array(
-								Type.Object({
-									_id: Type.String(),
-									cardNumber: Type.String(),
-									expirationDate: Type.String(),
-									nameOnCard: Type.String(),
-									isDefault: Type.Boolean(),
-									userId: Type.String(),
-									createdAt: Type.String(),
-									updatedAt: Type.String(),
-								})
-							),
-						}),
-					}),
+					200: CardsResponseSchema,
 					400: ErrorResponseSchema,
 					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
@@ -904,42 +780,3 @@ export default async function userRoutes(fastify: FastifyInstance) {
 		}
 	);
 }
-
-// Updated error handling interface and function
-interface ApiError {
-	code?: number;
-	error: string;
-	message: string;
-}
-
-const handleError = (error: unknown): ApiError => {
-	if (error instanceof Error.ValidationError) {
-		return {
-			code: 400,
-			error: "Validation Error",
-			message: error.message,
-		};
-	}
-
-	if (error instanceof Error.CastError) {
-		return {
-			code: 400,
-			error: "Invalid Format",
-			message: "Invalid ID format",
-		};
-	}
-
-	if (error instanceof Error) {
-		return {
-			code: 500,
-			error: "Server Error",
-			message: error.message,
-		};
-	}
-
-	return {
-		code: 500,
-		error: "Unknown Error",
-		message: "An unexpected error occurred",
-	};
-};
