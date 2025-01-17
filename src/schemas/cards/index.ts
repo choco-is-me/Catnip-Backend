@@ -1,3 +1,4 @@
+// src/schemas/cards/index.ts
 import { Type } from "@sinclair/typebox";
 import { ResponseWrapper, Timestamps } from "../common";
 import { ParamsWithUserId } from "../users";

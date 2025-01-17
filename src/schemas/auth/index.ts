@@ -1,6 +1,7 @@
+// src/schemas/auth/index.ts
 import { Type } from "@sinclair/typebox";
-import { UserSchema } from "../users";
 import { ResponseWrapper } from "../common";
+import { UserSchema } from "../users";
 
 // Request schemas
 export const LoginRequestBody = Type.Object({

@@ -1,3 +1,4 @@
+// src/config/index.ts
 import { Static, Type } from "@sinclair/typebox";
 import * as dotenv from "dotenv";
 dotenv.config();
@@ -15,7 +16,7 @@ const ConfigSchema = Type.Object({
 		Type.Literal("debug"),
 		Type.Literal("silent"),
 	]),
-	LOG_REQUESTS: Type.Optional(Type.Boolean()), // Add this
+	LOG_REQUESTS: Type.Optional(Type.Boolean()),
 	PORT: Type.Number(),
 	HOST: Type.String(),
 	MONGODB_URI: Type.String(),

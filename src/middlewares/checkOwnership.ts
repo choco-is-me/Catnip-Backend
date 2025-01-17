@@ -1,6 +1,14 @@
+// src/middlewares/checkOwnership.ts
 import { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { RouteGenericInterface } from "fastify/types/route";
+import { Logger } from "../services/logger.service";
+import {
+	CommonErrors,
+	createError,
+	ErrorTypes,
+	sendError,
+} from "../utils/error-handler";
 
 export default fp(async (fastify) => {
 	fastify.decorate(
@@ -10,31 +18,51 @@ export default fp(async (fastify) => {
 			reply: FastifyReply
 		) => {
 			if (!request.params || typeof request.params !== "object") {
-				reply.code(400).send({
-					success: false,
-					error: "Bad Request",
-					message: "Invalid request parameters",
-				});
-				return false;
+				Logger.warn(
+					`Invalid request parameters: ${JSON.stringify(
+						request.params
+					)}`,
+					"CheckOwnership"
+				);
+				return sendError(
+					reply,
+					createError(
+						400,
+						ErrorTypes.VALIDATION_ERROR,
+						"Invalid request parameters"
+					)
+				);
 			}
 
 			const requestedUserId = (request.params as { userId?: string })
 				.userId;
 			const authenticatedUserId = request.user?.userId;
 
-			if (
-				!requestedUserId ||
-				!authenticatedUserId ||
-				requestedUserId !== authenticatedUserId
-			) {
-				reply.code(403).send({
-					success: false,
-					error: "Forbidden",
-					message:
-						"You do not have permission to access this resource",
-				});
-				return false;
+			Logger.debug(
+				`Checking ownership - Requested: ${requestedUserId}, Authenticated: ${authenticatedUserId}`,
+				"CheckOwnership"
+			);
+
+			if (!requestedUserId || !authenticatedUserId) {
+				Logger.warn(
+					`Missing user ID - Requested: ${requestedUserId}, Authenticated: ${authenticatedUserId}`,
+					"CheckOwnership"
+				);
+				return sendError(reply, CommonErrors.forbidden());
 			}
+
+			if (requestedUserId !== authenticatedUserId) {
+				Logger.warn(
+					`Unauthorized access attempt - User ${authenticatedUserId} attempted to access resources of ${requestedUserId}`,
+					"CheckOwnership"
+				);
+				return sendError(reply, CommonErrors.forbidden());
+			}
+
+			Logger.debug(
+				`Ownership verified for user ${authenticatedUserId}`,
+				"CheckOwnership"
+			);
 			return true;
 		}
 	);

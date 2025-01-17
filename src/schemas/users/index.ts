@@ -1,3 +1,4 @@
+// src/schemas/users/index.ts
 import { Type } from "@sinclair/typebox";
 import { AddressSchema, ResponseWrapper, Timestamps } from "../common";
 
@@ -28,7 +29,6 @@ export const UserSchema = Type.Intersect([
 // Parameters schemas
 export const ParamsWithUserId = Type.Object({
 	userId: Type.String({
-		// MongoDB ObjectId is a 24-character hex string
 		pattern: "^[0-9a-fA-F]{24}$",
 		description: "MongoDB ObjectId",
 	}),
@@ -42,6 +42,8 @@ export const CreateUserBody = Type.Intersect([
 			minLength: 8,
 			pattern:
 				"^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$",
+			description:
+				"Password must contain at least 8 characters, including one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)",
 		}),
 	}),
 ]);

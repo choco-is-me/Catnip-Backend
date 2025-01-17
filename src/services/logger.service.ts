@@ -1,6 +1,6 @@
 // src/services/logger.service.ts
-import { CONFIG } from "../config";
 import chalk from "chalk"; // You'll need to install this: npm install chalk
+import { CONFIG } from "../config";
 
 export class Logger {
 	private static formatMessage(

@@ -1,17 +1,17 @@
 // src/routes/v1/users/cards.routes.ts
-import { FastifyInstance } from "fastify";
 import { Static, Type } from "@sinclair/typebox";
-import { CardsHandler } from "./handlers/cards.handler";
+import { FastifyInstance } from "fastify";
 import {
-	ParamsWithUserId,
-	ParamsWithUserIdAndCardId,
-	CreateCardBody,
 	CardResponseSchema,
 	CardsResponseSchema,
+	CreateCardBody,
 	ErrorResponseSchema,
 	PaginationQuery,
+	ParamsWithUserId,
+	ParamsWithUserIdAndCardId,
 	ResponseWrapper,
 } from "../../../schemas";
+import { CardsHandler } from "./handlers/cards.handler";
 
 export default async function cardRoutes(fastify: FastifyInstance) {
 	const handler = new CardsHandler();

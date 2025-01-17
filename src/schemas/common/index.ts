@@ -1,4 +1,5 @@
-import { Type, TSchema } from "@sinclair/typebox";
+// src/schemas/common/index.ts
+import { TSchema, Type } from "@sinclair/typebox";
 
 // Define common schema types
 export const Timestamps = {

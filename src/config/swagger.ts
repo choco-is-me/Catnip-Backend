@@ -1,3 +1,4 @@
+// src/config/swagger.ts
 import { SwaggerOptions } from "@fastify/swagger";
 
 export const swaggerOptions: SwaggerOptions = {

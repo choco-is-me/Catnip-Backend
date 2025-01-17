@@ -1,4 +1,5 @@
-import { FastifyReply } from "fastify";
+// src/types/fastify.d.ts
+import "fastify";
 import { JwtPayload } from "jsonwebtoken";
 
 declare module "fastify" {

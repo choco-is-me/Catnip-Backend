@@ -1,5 +1,6 @@
-import mongoose from "mongoose";
+// src/utils/error-handler.ts
 import { FastifyReply } from "fastify";
+import mongoose from "mongoose";
 
 interface StandardError {
 	success: false;
@@ -30,14 +31,6 @@ export const createError = (
 	message,
 	code,
 });
-
-export const sendError = (
-	reply: FastifyReply,
-	error: Error | StandardError
-) => {
-	const standardError = error instanceof Error ? handleError(error) : error;
-	return reply.code(standardError.code).send(standardError);
-};
 
 // Predefined error responses for common scenarios
 export const CommonErrors = {
@@ -80,6 +73,12 @@ export const CommonErrors = {
 };
 
 export function handleError(err: any): StandardError {
+	// Handle Fastify validation errors first
+	if (err.validation) {
+		const message = err.validation.map((v: any) => v.message).join(", ");
+		return createError(400, ErrorTypes.VALIDATION_ERROR, message);
+	}
+
 	// Mongoose Validation Error
 	if (err instanceof mongoose.Error.ValidationError) {
 		return createError(
@@ -111,7 +110,7 @@ export function handleError(err: any): StandardError {
 	}
 
 	// Fastify Validation Error
-	if (err.validation || err.statusCode === 400) {
+	if (err.statusCode === 400) {
 		return createError(
 			400,
 			ErrorTypes.VALIDATION_ERROR,
@@ -137,6 +136,11 @@ export function handleError(err: any): StandardError {
 		);
 	}
 
+	// If it's already a StandardError, return it
+	if (err.success === false && err.code && err.error && err.message) {
+		return err as StandardError;
+	}
+
 	// Default Error
 	return createError(
 		500,
@@ -144,3 +148,11 @@ export function handleError(err: any): StandardError {
 		err.message || "An unexpected error occurred"
 	);
 }
+
+export const sendError = (
+	reply: FastifyReply,
+	error: Error | StandardError
+): FastifyReply => {
+	const standardError = error instanceof Error ? handleError(error) : error;
+	return reply.code(standardError.code).send(standardError);
+};

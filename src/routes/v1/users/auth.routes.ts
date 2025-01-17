@@ -1,19 +1,36 @@
 // src/routes/v1/users/auth.routes.ts
 import { FastifyInstance } from "fastify";
-import { AuthHandler } from "./handlers/auth.handler";
 import {
+	CreateUserBody,
+	ErrorResponseSchema,
 	LoginRequestBody,
 	LoginResponseSchema,
 	LogoutResponseSchema,
-	CreateUserBody,
-	UserResponseSchema,
-	ErrorResponseSchema,
-	Static,
 	RefreshTokenResponseSchema,
+	Static,
+	UserResponseSchema,
 } from "../../../schemas";
+import { AuthHandler } from "./handlers/auth.handler";
 
 export default async function authRoutes(fastify: FastifyInstance) {
 	const handler = new AuthHandler();
+
+	fastify.setErrorHandler(function (error, _request, reply) {
+		if (error.validation) {
+			return reply.status(400).send({
+				success: false,
+				error: "Validation Error",
+				message: error.message,
+				code: 400,
+			});
+		}
+		return reply.status(500).send({
+			success: false,
+			error: "Internal Server Error",
+			message: error.message,
+			code: 500,
+		});
+	});
 
 	fastify.post(
 		"/refresh-token",

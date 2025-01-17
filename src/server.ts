@@ -1,16 +1,17 @@
+// src/schemas/index.ts
 import cookie from "@fastify/cookie";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import Fastify, { FastifyInstance } from "fastify";
+import mongoose from "mongoose";
 import { CONFIG } from "./config";
 import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
-import { Logger } from "./services/logger.service";
 import authPlugin from "./middlewares/auth";
 import checkOwnershipPlugin from "./middlewares/checkOwnership";
 import dbPlugin from "./plugins/mongodb";
 import userRoutes from "./routes/v1/users";
-import mongoose from "mongoose";
+import { Logger } from "./services/logger.service";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
