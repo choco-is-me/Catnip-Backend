@@ -63,3 +63,9 @@ export const UsersResponseSchema = ResponseWrapper(
 		totalPages: Type.Integer(),
 	})
 );
+
+export const DeleteResponseSchema = ResponseWrapper(
+	Type.Object({
+		message: Type.String(),
+	})
+);

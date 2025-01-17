@@ -1,14 +1,17 @@
+// src/plugins/mongodb.ts
 import { FastifyInstance } from "fastify";
 import mongoose from "mongoose";
 import { CONFIG } from "../config";
+import { Logger } from "../services/logger.service";
 
 export async function connectDB() {
 	try {
 		await mongoose.connect(CONFIG.MONGODB_URI);
-		console.log("📦 Connected to MongoDB successfully");
+		// Use the Logger service instead of console.log
+		Logger.info("📦 Connected to MongoDB successfully");
 		return true;
 	} catch (error) {
-		console.error("Failed to connect to MongoDB:", error);
+		Logger.error(error as Error, "MongoDB");
 		return false;
 	}
 }
@@ -16,9 +19,9 @@ export async function connectDB() {
 export async function disconnectDB() {
 	try {
 		await mongoose.disconnect();
-		console.log("Disconnected from MongoDB");
+		Logger.info("Disconnected from MongoDB");
 	} catch (error) {
-		console.error("Error disconnecting from MongoDB:", error);
+		Logger.error(error as Error, "MongoDB");
 	}
 }
 

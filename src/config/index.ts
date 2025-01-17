@@ -8,6 +8,14 @@ const ConfigSchema = Type.Object({
 		Type.Literal("production"),
 		Type.Literal("test"),
 	]),
+	LOG_LEVEL: Type.Union([
+		Type.Literal("info"),
+		Type.Literal("error"),
+		Type.Literal("warn"),
+		Type.Literal("debug"),
+		Type.Literal("silent"),
+	]),
+	LOG_REQUESTS: Type.Optional(Type.Boolean()), // Add this
 	PORT: Type.Number(),
 	HOST: Type.String(),
 	MONGODB_URI: Type.String(),
@@ -19,7 +27,6 @@ const ConfigSchema = Type.Object({
 	JWT_EXPIRES_IN: Type.String(),
 	JWT_REFRESH_SECRET: Type.String(),
 	JWT_REFRESH_EXPIRES_IN: Type.String(),
-	LOG_LEVEL: Type.String(),
 	CORS_ORIGIN: Type.String(),
 	UPLOAD_DIR: Type.String(),
 	ENCRYPTION_KEY: Type.String(),
@@ -69,7 +76,8 @@ export const CONFIG: Config = {
 	JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "5s",
 	JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET!, // Required
 	JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
-	LOG_LEVEL: process.env.LOG_LEVEL || "info",
+	LOG_LEVEL: (process.env.LOG_LEVEL as Config["LOG_LEVEL"]) || "info",
+	LOG_REQUESTS: process.env.LOG_REQUESTS === "true",
 	CORS_ORIGIN: process.env.CORS_ORIGIN || "*",
 	UPLOAD_DIR: process.env.UPLOAD_DIR || "./uploads",
 	ENCRYPTION_KEY: process.env.ENCRYPTION_KEY!, // Required

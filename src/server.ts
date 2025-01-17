@@ -1,99 +1,139 @@
+import cookie from "@fastify/cookie";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
 import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import Fastify, { FastifyInstance } from "fastify";
-import mongoose from "mongoose";
 import { CONFIG } from "./config";
 import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
+import { Logger } from "./services/logger.service";
 import authPlugin from "./middlewares/auth";
 import checkOwnershipPlugin from "./middlewares/checkOwnership";
 import dbPlugin from "./plugins/mongodb";
-import authRoutes from "./routes/v1/auth";
 import userRoutes from "./routes/v1/users";
-import cookie from "@fastify/cookie";
+import mongoose from "mongoose";
 
 export async function buildServer(): Promise<FastifyInstance> {
+	// Create Fastify instance with logger disabled
 	const server = Fastify({
-		logger: {
-			level: CONFIG.LOG_LEVEL,
-		},
+		logger: false,
 	}).withTypeProvider<TypeBoxTypeProvider>();
 
-	// Register the cookie plugin
-	await server.register(cookie, {
-		secret: CONFIG.COOKIE_SECRET,
-		hook: "onRequest",
-	});
+	try {
+		// Register core plugins
+		await server.register(cookie, {
+			secret: CONFIG.COOKIE_SECRET,
+			hook: "onRequest",
+		});
 
-	// Register the ownership middleware
-	await server.register(checkOwnershipPlugin);
+		// Register middleware
+		await server.register(checkOwnershipPlugin);
+		await server.register(authPlugin);
 
-	// Register the authentication middleware
-	await server.register(authPlugin);
+		// Register API documentation
+		await server.register(fastifySwagger, swaggerOptions);
+		await server.register(fastifySwaggerUi, swaggerUiOptions);
 
-	// Register the auth routes
-	await server.register(authRoutes, { prefix: "/api/v1/auth" });
+		// Register CORS
+		await server.register(import("@fastify/cors"), {
+			origin: CONFIG.CORS_ORIGIN,
+		});
 
-	// Add Swagger documentation
-	await server.register(fastifySwagger, swaggerOptions);
-	await server.register(fastifySwaggerUi, swaggerUiOptions);
-
-	// Register plugins
-	await server.register(import("@fastify/cors"), {
-		origin: CONFIG.CORS_ORIGIN,
-	});
-
-	// Add rate limiting
-	await server.register(import("@fastify/rate-limit"), {
-		max: 100,
-		timeWindow: "1 minute",
-		errorResponseBuilder: function (_, context) {
-			return {
-				success: false,
-				error: "Rate Limit Exceeded",
-				message: `Rate limit exceeded, please try again in ${context.after}`,
-				code: 429,
-			};
-		},
-	});
-
-	// Register MongoDB plugin
-	await server.register(dbPlugin);
-
-	// Add a test route that checks MongoDB connection
-	server.get("/health", async () => {
-		const dbStatus =
-			mongoose.connection.readyState === 1 ? "connected" : "disconnected";
-		return {
-			status: "ok",
-			timestamp: new Date().toISOString(),
-			database: {
-				status: dbStatus,
-				host: mongoose.connection.host,
-				name: mongoose.connection.name,
+		// Register rate limiting
+		await server.register(import("@fastify/rate-limit"), {
+			max: 100,
+			timeWindow: "1 minute",
+			errorResponseBuilder: function (_, context) {
+				return {
+					success: false,
+					error: "Rate Limit Exceeded",
+					message: `Rate limit exceeded, please try again in ${context.after}`,
+					code: 429,
+				};
 			},
-		};
-	});
+		});
 
-	// Register
-	await server.register(userRoutes, { prefix: "/api/v1" });
+		// Register database plugin
+		await server.register(dbPlugin);
 
-	return server;
+		// Add request logging hook if in debug mode
+		if (CONFIG.LOG_LEVEL === "debug") {
+			server.addHook("onResponse", (request, reply, done) => {
+				Logger.debug(
+					`${request.method} ${request.url} - ${reply.statusCode}`,
+					"Request"
+				);
+				done();
+			});
+		}
+
+		// Root route
+		server.get("/", async () => {
+			return {
+				success: true,
+				data: {
+					name: "Space Cat API",
+					version: "1.0.0",
+					description: "API for Space Cat Application",
+					documentation: "/documentation",
+					health: "/health",
+				},
+			};
+		});
+
+		// Health check route
+		server.get("/health", async () => {
+			const dbStatus =
+				mongoose.connection.readyState === 1
+					? "connected"
+					: "disconnected";
+			return {
+				status: "ok",
+				timestamp: new Date().toISOString(),
+				database: {
+					status: dbStatus,
+					host: mongoose.connection.host,
+					name: mongoose.connection.name,
+				},
+			};
+		});
+
+		// Register all API routes
+		await server.register(userRoutes, { prefix: "/api/v1" });
+
+		return server;
+	} catch (err) {
+		Logger.error(err as Error, "ServerBuild");
+		throw err;
+	}
 }
 
+// Start server function
 async function startServer() {
 	try {
 		const server = await buildServer();
+
 		await server.listen({
 			port: CONFIG.PORT,
 			host: CONFIG.HOST,
 		});
+
+		const displayHost =
+			CONFIG.HOST === "0.0.0.0" ? "localhost" : CONFIG.HOST;
+		Logger.info(
+			`🚀 Server running at http://${displayHost}:${CONFIG.PORT}`
+		);
+		Logger.info(
+			`📚 Documentation available at http://${displayHost}:${CONFIG.PORT}/documentation`
+		);
 	} catch (err) {
-		console.error(err);
+		Logger.error(err as Error, "StartServer");
 		process.exit(1);
 	}
 }
 
+// Only start the server if this file is run directly
 if (require.main === module) {
 	startServer();
 }
+
+export default buildServer;
