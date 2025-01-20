@@ -12,6 +12,7 @@ import checkOwnershipPlugin from "./middlewares/checkOwnership";
 import dbPlugin from "./plugins/mongodb";
 import userRoutes from "./routes/v1/users";
 import { Logger } from "./services/logger.service";
+import { getHelmetConfig } from "./config/helmet";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
@@ -20,6 +21,18 @@ export async function buildServer(): Promise<FastifyInstance> {
 	}).withTypeProvider<TypeBoxTypeProvider>();
 
 	try {
+		if (CONFIG.ENABLE_SECURITY_HEADERS) {
+			await server.register(import("@fastify/helmet"), getHelmetConfig());
+			// Add Permissions-Policy header separately
+			server.addHook("onRequest", (_request, reply, done) => {
+				reply.header(
+					"Permissions-Policy",
+					"accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+				);
+				done();
+			});
+		}
+
 		// Register core plugins
 		await server.register(cookie, {
 			secret: CONFIG.COOKIE_SECRET,
@@ -72,9 +85,9 @@ export async function buildServer(): Promise<FastifyInstance> {
 			return {
 				success: true,
 				data: {
-					name: "Space Cat API",
+					name: "Catnip API",
 					version: "1.0.0",
-					description: "API for Space Cat Application",
+					description: "API for Catnip Application",
 					documentation: "/documentation",
 					health: "/health",
 				},

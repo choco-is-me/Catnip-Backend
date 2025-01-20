@@ -44,6 +44,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			config: {
+				rateLimit: {
+					max: 10,
+					timeWindow: "15 minute",
+				},
+			},
 		},
 		handler.refreshToken.bind(handler)
 	);
@@ -61,6 +67,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
 					401: ErrorResponseSchema,
 					429: ErrorResponseSchema,
 					500: ErrorResponseSchema,
+				},
+			},
+			config: {
+				rateLimit: {
+					max: 50,
+					timeWindow: "15 minute",
 				},
 			},
 		},

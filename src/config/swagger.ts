@@ -4,8 +4,8 @@ import { SwaggerOptions } from "@fastify/swagger";
 export const swaggerOptions: SwaggerOptions = {
 	swagger: {
 		info: {
-			title: "Space Cat API Documentation",
-			description: "API documentation for Space Cat App Backend",
+			title: "Catnip API Documentation",
+			description: "API documentation for Catnip App Backend",
 			version: "1.0.0",
 		},
 		externalDocs: {
@@ -35,8 +35,8 @@ export const swaggerUiOptions = {
 	exposeRoute: true,
 	swagger: {
 		info: {
-			title: "Space Cat API Documentation",
-			description: "API documentation for Space Cat App Backend",
+			title: "Catnip API Documentation",
+			description: "API documentation for Catnip App Backend",
 			version: "1.0.0",
 		},
 	},

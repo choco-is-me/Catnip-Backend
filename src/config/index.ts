@@ -9,6 +9,7 @@ const ConfigSchema = Type.Object({
 		Type.Literal("production"),
 		Type.Literal("test"),
 	]),
+	ENABLE_SECURITY_HEADERS: Type.Optional(Type.Boolean()),
 	LOG_LEVEL: Type.Union([
 		Type.Literal("info"),
 		Type.Literal("error"),
@@ -63,6 +64,7 @@ export type Config = Static<typeof ConfigSchema>;
 
 export const CONFIG: Config = {
 	NODE_ENV: (process.env.NODE_ENV as Config["NODE_ENV"]) || "development",
+	ENABLE_SECURITY_HEADERS: process.env.NODE_ENV === "production",
 	PORT: parseInt(process.env.PORT || "3000", 10),
 	HOST: process.env.HOST || "0.0.0.0",
 	MONGODB_URI: process.env.MONGODB_URI!, // Required
@@ -74,7 +76,7 @@ export const CONFIG: Config = {
 	COOKIE_SECURE: process.env.NODE_ENV === "production",
 	COOKIE_MAX_AGE: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
 	JWT_SECRET: process.env.JWT_SECRET!, // Required
-	JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "5s",
+	JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "10s",
 	JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET!, // Required
 	JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 	LOG_LEVEL: (process.env.LOG_LEVEL as Config["LOG_LEVEL"]) || "info",

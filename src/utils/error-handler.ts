@@ -9,99 +9,310 @@ interface StandardError {
 	code: number;
 }
 
-// Common error types for consistency
+// Enhanced error types for consistency
 export const ErrorTypes = {
+	// Fingerprint related errors
+	FINGERPRINT_MISMATCH: "Fingerprint Mismatch",
+	FINGERPRINT_MISSING: "Fingerprint Missing",
+	FINGERPRINT_INVALID: "Invalid Fingerprint",
+
+	// Validation Errors
 	VALIDATION_ERROR: "Validation Error",
-	NOT_FOUND: "Not Found",
+	INVALID_INPUT: "Invalid Input",
+	INVALID_FORMAT: "Invalid Format",
+	MISSING_FIELDS: "Missing Fields",
+
+	// Authentication Errors
 	AUTHENTICATION_ERROR: "Authentication Error",
-	DUPLICATE_ERROR: "Duplicate Error",
+	INVALID_CREDENTIALS: "Invalid Credentials",
+	TOKEN_EXPIRED: "Token Expired",
+	TOKEN_INVALID: "Token Invalid",
+	TOKEN_MISSING: "Token Missing",
+	TOKEN_REVOKED: "Token Revoked",
+	TOKEN_REUSE: "Token Reuse Detected",
+	INVALID_TOKEN_TYPE: "Invalid Token Type",
+	INVALID_TOKEN_SUBJECT: "Invalid Token Subject",
+
+	// Authorization Errors
 	FORBIDDEN: "Forbidden",
+	INSUFFICIENT_PERMISSIONS: "Insufficient Permissions",
+	ACCOUNT_LOCKED: "Account Locked",
+
+	// Resource Errors
+	NOT_FOUND: "Not Found",
+	DUPLICATE_ERROR: "Duplicate Error",
+	RESOURCE_CONFLICT: "Resource Conflict",
+	RESOURCE_EXPIRED: "Resource Expired",
+
+	// Rate Limiting Errors
 	RATE_LIMIT_ERROR: "Rate Limit Exceeded",
+	TOO_MANY_REQUESTS: "Too Many Requests",
+
+	// Session Errors
+	SESSION_EXPIRED: "Session Expired",
+	SESSION_INVALID: "Session Invalid",
+
+	// Database Errors
+	DATABASE_ERROR: "Database Error",
+	TRANSACTION_ERROR: "Transaction Error",
+	CONNECTION_ERROR: "Connection Error",
+
+	// Server Errors
 	INTERNAL_ERROR: "Internal Server Error",
+	SERVICE_UNAVAILABLE: "Service Unavailable",
+	TIMEOUT_ERROR: "Timeout Error",
+
+	// Security Errors
+	SECURITY_ERROR: "Security Error",
+	SUSPICIOUS_ACTIVITY: "Suspicious Activity",
+	INVALID_IP: "Invalid IP",
+
+	// Cookie Errors
+	COOKIE_ERROR: "Cookie Error",
+	COOKIE_MISSING: "Cookie Missing",
+	COOKIE_INVALID: "Cookie Invalid",
+
+	// Business Logic Errors
+	BUSINESS_ERROR: "Business Rule Violation",
+	INVALID_STATE: "Invalid State",
+	OPERATION_NOT_ALLOWED: "Operation Not Allowed",
 } as const;
 
-// Common error responses
+// Create error with optional details
 export const createError = (
 	code: number,
 	error: string,
-	message: string
+	message: string,
+	details?: Record<string, any>
 ): StandardError => ({
 	success: false,
 	error,
 	message,
 	code,
+	...(details ? { details } : {}),
 });
 
-// Predefined error responses for common scenarios
+// Enhanced predefined error responses
 export const CommonErrors = {
-	userNotFound: (): StandardError =>
-		createError(404, ErrorTypes.NOT_FOUND, "User not found"),
-
-	cardNotFound: (): StandardError =>
-		createError(404, ErrorTypes.NOT_FOUND, "Card not found"),
-
-	invalidToken: (): StandardError =>
+	// Fingerprint related errors
+	fingerprintMismatch: () =>
 		createError(
 			401,
-			ErrorTypes.AUTHENTICATION_ERROR,
-			"Invalid or expired token"
+			ErrorTypes.FINGERPRINT_MISMATCH,
+			"Token fingerprint mismatch detected"
 		),
 
-	noToken: (): StandardError =>
-		createError(401, ErrorTypes.AUTHENTICATION_ERROR, "No token provided"),
-
-	forbidden: (): StandardError =>
+	fingerprintMissing: () =>
 		createError(
-			403,
-			ErrorTypes.FORBIDDEN,
-			"You do not have permission to access this resource"
+			400,
+			ErrorTypes.FINGERPRINT_MISSING,
+			"Required fingerprint data missing"
 		),
 
-	emailExists: (): StandardError =>
+	fingerprintInvalid: () =>
+		createError(
+			400,
+			ErrorTypes.FINGERPRINT_INVALID,
+			"Invalid fingerprint format"
+		),
+
+	// User related errors
+	userNotFound: () =>
+		createError(404, ErrorTypes.NOT_FOUND, "User not found"),
+
+	emailExists: () =>
 		createError(
 			409,
 			ErrorTypes.DUPLICATE_ERROR,
 			"Email already registered"
 		),
 
-	invalidCredentials: (): StandardError =>
+	invalidCredentials: () =>
 		createError(
 			401,
-			ErrorTypes.AUTHENTICATION_ERROR,
+			ErrorTypes.INVALID_CREDENTIALS,
 			"Invalid email or password"
+		),
+
+	accountLocked: (reason?: string) =>
+		createError(
+			403,
+			ErrorTypes.ACCOUNT_LOCKED,
+			reason || "Account has been locked"
+		),
+
+	// Authentication errors
+	invalidToken: () =>
+		createError(401, ErrorTypes.TOKEN_INVALID, "Invalid or expired token"),
+
+	noToken: () =>
+		createError(401, ErrorTypes.TOKEN_MISSING, "No token provided"),
+
+	tokenExpired: () =>
+		createError(401, ErrorTypes.TOKEN_EXPIRED, "Token has expired"),
+
+	tokenRevoked: () =>
+		createError(401, ErrorTypes.TOKEN_REVOKED, "Token has been revoked"),
+
+	tokenReused: () =>
+		createError(401, ErrorTypes.TOKEN_REUSE, "Token reuse detected"),
+
+	invalidTokenType: () =>
+		createError(401, ErrorTypes.INVALID_TOKEN_TYPE, "Invalid token type"),
+
+	// Authorization errors
+	forbidden: () =>
+		createError(
+			403,
+			ErrorTypes.FORBIDDEN,
+			"You do not have permission to access this resource"
+		),
+
+	insufficientPermissions: (requiredPermission?: string) =>
+		createError(
+			403,
+			ErrorTypes.INSUFFICIENT_PERMISSIONS,
+			requiredPermission
+				? `Insufficient permissions. Required: ${requiredPermission}`
+				: "Insufficient permissions to perform this action"
+		),
+
+	// Resource errors
+	cardNotFound: () =>
+		createError(404, ErrorTypes.NOT_FOUND, "Card not found"),
+
+	resourceConflict: (resource: string) =>
+		createError(
+			409,
+			ErrorTypes.RESOURCE_CONFLICT,
+			`${resource} already exists or conflicts with existing resource`
+		),
+
+	// Rate limiting errors
+	rateLimitExceeded: (timeWindow: string) =>
+		createError(
+			429,
+			ErrorTypes.RATE_LIMIT_ERROR,
+			`Rate limit exceeded. Please try again in ${timeWindow}`
+		),
+
+	// Session errors
+	sessionExpired: () =>
+		createError(
+			401,
+			ErrorTypes.SESSION_EXPIRED,
+			"Your session has expired. Please log in again"
+		),
+
+	sessionInvalid: () =>
+		createError(
+			401,
+			ErrorTypes.SESSION_INVALID,
+			"Invalid session. Please log in again"
+		),
+
+	// Cookie errors
+	cookieError: (cookieName: string) =>
+		createError(
+			400,
+			ErrorTypes.COOKIE_ERROR,
+			`Error processing cookie: ${cookieName}`
+		),
+
+	cookieMissing: (cookieName: string) =>
+		createError(
+			400,
+			ErrorTypes.COOKIE_MISSING,
+			`Required cookie missing: ${cookieName}`
+		),
+
+	// Database errors
+	databaseError: (operation: string) =>
+		createError(
+			500,
+			ErrorTypes.DATABASE_ERROR,
+			`Database error during ${operation}`
+		),
+
+	transactionError: () =>
+		createError(
+			500,
+			ErrorTypes.TRANSACTION_ERROR,
+			"Transaction failed to complete"
+		),
+
+	// Validation errors
+	invalidFormat: (field: string) =>
+		createError(
+			400,
+			ErrorTypes.INVALID_FORMAT,
+			`Invalid format for ${field}`
+		),
+
+	missingFields: (fields: string[]) =>
+		createError(
+			400,
+			ErrorTypes.MISSING_FIELDS,
+			`Missing required fields: ${fields.join(", ")}`
+		),
+
+	// Security errors
+	suspiciousActivity: () =>
+		createError(
+			403,
+			ErrorTypes.SUSPICIOUS_ACTIVITY,
+			"Suspicious activity detected"
+		),
+
+	invalidIP: () =>
+		createError(
+			403,
+			ErrorTypes.INVALID_IP,
+			"Access denied from this IP address"
 		),
 };
 
+// Enhanced error handling function
 export function handleError(err: any): StandardError {
-	// Handle Fastify validation errors first
+	// Fastify validation errors
 	if (err.validation) {
-		const message = err.validation.map((v: any) => v.message).join(", ");
-		return createError(400, ErrorTypes.VALIDATION_ERROR, message);
-	}
-
-	// Mongoose Validation Error
-	if (err instanceof mongoose.Error.ValidationError) {
 		return createError(
 			400,
 			ErrorTypes.VALIDATION_ERROR,
-			Object.values(err.errors)
-				.map((error) => error.message)
-				.join(", ")
+			err.validation.map((v: any) => v.message).join(", ")
 		);
 	}
 
-	// Mongoose Cast Error (Invalid ID)
-	if (err instanceof mongoose.Error.CastError) {
-		return createError(
-			400,
-			ErrorTypes.VALIDATION_ERROR,
-			"The provided ID is invalid"
-		);
+	// Mongoose specific errors
+	if (err instanceof mongoose.Error) {
+		// Validation Error
+		if (err instanceof mongoose.Error.ValidationError) {
+			return createError(
+				400,
+				ErrorTypes.VALIDATION_ERROR,
+				Object.values(err.errors)
+					.map((error) => error.message)
+					.join(", ")
+			);
+		}
+
+		// Cast Error (Invalid ID)
+		if (err instanceof mongoose.Error.CastError) {
+			return createError(
+				400,
+				ErrorTypes.INVALID_FORMAT,
+				`Invalid format for ${err.path}: ${err.value}`
+			);
+		}
 	}
 
-	// Mongoose Duplicate Key Error
-	if (err.code === 11000) {
-		const field = Object.keys(err.keyPattern)[0];
+	// MongoDB Server Error (includes duplicate key errors)
+	// Using type assertion for MongoDB specific error properties
+	if (err instanceof Error && (err as any).code === 11000) {
+		const mongoError = err as any;
+		const field = mongoError.keyPattern
+			? Object.keys(mongoError.keyPattern)[0]
+			: "field";
 		return createError(
 			409,
 			ErrorTypes.DUPLICATE_ERROR,
@@ -109,22 +320,17 @@ export function handleError(err: any): StandardError {
 		);
 	}
 
-	// Fastify Validation Error
-	if (err.statusCode === 400) {
+	// JWT Errors
+	if (err.name === "JsonWebTokenError") {
 		return createError(
-			400,
-			ErrorTypes.VALIDATION_ERROR,
-			err.message || "Invalid input data"
+			401,
+			ErrorTypes.TOKEN_INVALID,
+			"Invalid token format or signature"
 		);
 	}
 
-	// JWT Errors
-	if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
-		return createError(
-			401,
-			ErrorTypes.AUTHENTICATION_ERROR,
-			err.message || "Invalid or expired token"
-		);
+	if (err.name === "TokenExpiredError") {
+		return createError(401, ErrorTypes.TOKEN_EXPIRED, "Token has expired");
 	}
 
 	// Rate Limit Error
@@ -136,7 +342,7 @@ export function handleError(err: any): StandardError {
 		);
 	}
 
-	// If it's already a StandardError, return it
+	// Check if it's already a StandardError
 	if (err.success === false && err.code && err.error && err.message) {
 		return err as StandardError;
 	}
@@ -149,6 +355,7 @@ export function handleError(err: any): StandardError {
 	);
 }
 
+// Enhanced error sending function
 export const sendError = (
 	reply: FastifyReply,
 	error: Error | StandardError
@@ -156,3 +363,15 @@ export const sendError = (
 	const standardError = error instanceof Error ? handleError(error) : error;
 	return reply.code(standardError.code).send(standardError);
 };
+
+// Helper function to create validation errors
+export const createValidationError = (message: string): StandardError =>
+	createError(400, ErrorTypes.VALIDATION_ERROR, message);
+
+// Helper function to create business logic errors
+export const createBusinessError = (message: string): StandardError =>
+	createError(422, ErrorTypes.BUSINESS_ERROR, message);
+
+// Helper function to create security errors
+export const createSecurityError = (message: string): StandardError =>
+	createError(403, ErrorTypes.SECURITY_ERROR, message);

@@ -9,6 +9,8 @@ import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
 	createError,
+	createBusinessError,
+	createSecurityError,
 	ErrorTypes,
 	sendError,
 } from "../../../../utils/error-handler";
@@ -25,25 +27,18 @@ export class ProfileHandler {
 				"ProfileHandler"
 			);
 
-			// Validate userId format first
+			// Validate userId format
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
 				Logger.warn(
 					`Invalid user ID format: ${userId}`,
 					"ProfileHandler"
 				);
-				return sendError(
-					reply,
-					createError(
-						400,
-						ErrorTypes.VALIDATION_ERROR,
-						"Invalid user ID format"
-					)
-				);
+				return sendError(reply, CommonErrors.invalidFormat("user ID"));
 			}
 
 			try {
 				const user = await User.findById(userId)
-					.select("-password") // Explicitly exclude password
+					.select("-password")
 					.lean();
 
 				if (!user) {
@@ -51,13 +46,11 @@ export class ProfileHandler {
 					return sendError(reply, CommonErrors.userNotFound());
 				}
 
-				// Log successful retrieval with minimal user info for privacy
 				Logger.info(
 					`Profile retrieved successfully for user: ${userId} (${user.email})`,
 					"ProfileHandler"
 				);
 
-				// Log detailed fields retrieval in debug mode
 				Logger.debug(
 					`Retrieved fields for user ${userId}: ${Object.keys(
 						user
@@ -82,7 +75,6 @@ export class ProfileHandler {
 						"ProfileHandler"
 					);
 
-					// Log stack trace in debug mode
 					if (findError.stack) {
 						Logger.debug(
 							`Stack trace: ${findError.stack}`,
@@ -90,45 +82,31 @@ export class ProfileHandler {
 						);
 					}
 
-					// Handle specific MongoDB errors
 					if (findError instanceof mongoose.Error.CastError) {
 						return sendError(
 							reply,
-							createError(
-								400,
-								ErrorTypes.VALIDATION_ERROR,
-								"Invalid user ID format"
-							)
+							CommonErrors.invalidFormat("user ID")
 						);
 					}
+
+					return sendError(
+						reply,
+						CommonErrors.databaseError("profile retrieval")
+					);
 				}
 				throw findError;
 			}
 		} catch (error) {
-			// Handle any uncaught errors
 			if (error instanceof mongoose.Error) {
 				Logger.error(
 					new Error(`Unhandled MongoDB error: ${error.message}`),
 					"ProfileHandler"
 				);
-				if (error.stack) {
-					Logger.debug(
-						`Stack trace: ${error.stack}`,
-						"ProfileHandler"
-					);
-				}
-
-				// Log specific MongoDB error types
-				if (error.name === "MongoServerError") {
-					Logger.error(
-						new Error(`MongoDB server error: ${error.message}`),
-						"ProfileHandler"
-					);
-				}
-			} else {
-				Logger.error(error as Error, "ProfileHandler");
+				return sendError(
+					reply,
+					CommonErrors.databaseError("profile operation")
+				);
 			}
-
 			return sendError(reply, error as Error);
 		}
 	}
@@ -150,31 +128,30 @@ export class ProfileHandler {
 				"ProfileHandler"
 			);
 
-			// Validate userId format first
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
 				await session.abortTransaction();
 				Logger.warn(
 					`Invalid user ID format: ${userId}`,
 					"ProfileHandler"
 				);
+				return sendError(reply, CommonErrors.invalidFormat("user ID"));
+			}
+
+			const updateFields = Object.keys(request.body);
+			if (updateFields.length === 0) {
+				await session.abortTransaction();
 				return sendError(
 					reply,
-					createError(
-						400,
-						ErrorTypes.VALIDATION_ERROR,
-						"Invalid user ID format"
-					)
+					createBusinessError("No fields provided for update")
 				);
 			}
 
-			// Log update request details (excluding sensitive data)
-			const updateFields = Object.keys(request.body);
 			Logger.debug(
 				`Update requested for fields: ${updateFields.join(", ")}`,
 				"ProfileHandler"
 			);
 
-			// Check for email update and verify uniqueness if needed
+			// Email update handling
 			if (request.body.email) {
 				try {
 					const existingUser = await User.findOne({
@@ -199,12 +176,15 @@ export class ProfileHandler {
 						),
 						"ProfileHandler"
 					);
-					throw emailError;
+					throw createError(
+						500,
+						ErrorTypes.DATABASE_ERROR,
+						"Error verifying email uniqueness"
+					);
 				}
 			}
 
 			try {
-				// Attempt to update user
 				const updatedUser = await User.findByIdAndUpdate(
 					userId,
 					{ $set: request.body },
@@ -225,7 +205,6 @@ export class ProfileHandler {
 					return sendError(reply, CommonErrors.userNotFound());
 				}
 
-				// Log successful update
 				Logger.debug(
 					`Updated fields for user ${userId}: ${updateFields.join(
 						", "
@@ -274,36 +253,30 @@ export class ProfileHandler {
 		} catch (error) {
 			await session.abortTransaction();
 
-			// Handle MongoDB-specific errors
 			if (error instanceof mongoose.Error) {
 				Logger.error(
 					new Error(`MongoDB operation failed: ${error.message}`),
 					"ProfileHandler"
 				);
-				if (error.stack) {
-					Logger.debug(
-						`Stack trace: ${error.stack}`,
-						"ProfileHandler"
-					);
-				}
 
-				// Handle specific MongoDB errors
 				if (
 					error.name === "MongoServerError" &&
 					(error as any).code === 11000
 				) {
-					Logger.error(
-						new Error(
-							`Duplicate key error: ${JSON.stringify(
-								(error as any).keyValue
-							)}`
-						),
-						"ProfileHandler"
+					return sendError(
+						reply,
+						createError(
+							409,
+							ErrorTypes.DUPLICATE_ERROR,
+							"Duplicate field value entered"
+						)
 					);
-					return sendError(reply, CommonErrors.emailExists());
 				}
-			} else {
-				Logger.error(error as Error, "ProfileHandler");
+
+				return sendError(
+					reply,
+					CommonErrors.databaseError("profile update")
+				);
 			}
 
 			return sendError(reply, error as Error);
@@ -327,24 +300,16 @@ export class ProfileHandler {
 				"ProfileHandler"
 			);
 
-			// Validate userId format first
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
 				await session.abortTransaction();
 				Logger.warn(
 					`Invalid user ID format: ${userId}`,
 					"ProfileHandler"
 				);
-				return sendError(
-					reply,
-					createError(
-						400,
-						ErrorTypes.VALIDATION_ERROR,
-						"Invalid user ID format"
-					)
-				);
+				return sendError(reply, CommonErrors.invalidFormat("user ID"));
 			}
 
-			// First check if user exists and get their data for logging
+			// Check user existence and get data for logging
 			let user;
 			try {
 				user = await User.findById(userId)
@@ -360,6 +325,18 @@ export class ProfileHandler {
 					return sendError(reply, CommonErrors.userNotFound());
 				}
 
+				// Security check: Verify if user has active subscriptions or pending transactions
+				const hasActiveSubscriptions = false; // Implement this check based on your business logic
+				if (hasActiveSubscriptions) {
+					await session.abortTransaction();
+					return sendError(
+						reply,
+						createBusinessError(
+							"Cannot delete profile with active subscriptions"
+						)
+					);
+				}
+
 				Logger.info(
 					`Starting deletion process for user: ${userId} (${user.email})`,
 					"ProfileHandler"
@@ -372,10 +349,13 @@ export class ProfileHandler {
 					),
 					"ProfileHandler"
 				);
-				throw findError;
+				return sendError(
+					reply,
+					CommonErrors.databaseError("user lookup")
+				);
 			}
 
-			// Delete associated data with proper error handling
+			// Delete associated data
 			try {
 				Logger.debug(
 					`Deleting associated cards for user: ${userId}`,
@@ -399,7 +379,10 @@ export class ProfileHandler {
 					),
 					"ProfileHandler"
 				);
-				throw cardsError;
+				return sendError(
+					reply,
+					CommonErrors.databaseError("cards deletion")
+				);
 			}
 
 			// Delete user account
@@ -432,18 +415,17 @@ export class ProfileHandler {
 					),
 					"ProfileHandler"
 				);
-				throw userDeleteError;
+				return sendError(
+					reply,
+					CommonErrors.databaseError("user deletion")
+				);
 			}
 
-			// If we reached here, commit the transaction
 			await session.commitTransaction();
 			Logger.info(
 				`User profile and associated data deleted successfully: ${userId}`,
 				"ProfileHandler"
 			);
-
-			// Invalidate any active sessions/tokens here if implemented
-			// You might want to add token invalidation logic here
 
 			return reply.code(200).send({
 				success: true,
@@ -454,33 +436,30 @@ export class ProfileHandler {
 		} catch (error) {
 			await session.abortTransaction();
 
-			// Handle MongoDB-specific errors
 			if (error instanceof mongoose.Error) {
 				Logger.error(
 					new Error(`MongoDB operation failed: ${error.message}`),
 					"ProfileHandler"
 				);
-				if (error.stack) {
-					Logger.debug(
-						`Stack trace: ${error.stack}`,
-						"ProfileHandler"
+
+				if (error instanceof mongoose.Error.CastError) {
+					return sendError(
+						reply,
+						CommonErrors.invalidFormat("user ID")
 					);
 				}
 
-				// Handle specific MongoDB errors
-				if (error instanceof mongoose.Error.CastError) {
-					Logger.error(
-						new Error(`Invalid MongoDB ID format: ${error.value}`),
-						"ProfileHandler"
-					);
-				} else if (error.name === "MongoServerError") {
-					Logger.error(
-						new Error(`MongoDB server error: ${error.message}`),
-						"ProfileHandler"
-					);
-				}
-			} else {
-				Logger.error(error as Error, "ProfileHandler");
+				return sendError(
+					reply,
+					CommonErrors.databaseError("profile deletion")
+				);
+			}
+
+			if ((error as any).code === 403) {
+				return sendError(
+					reply,
+					createSecurityError("Unauthorized deletion attempt")
+				);
 			}
 
 			return sendError(reply, error as Error);
