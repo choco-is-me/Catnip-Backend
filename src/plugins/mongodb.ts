@@ -32,8 +32,14 @@ export async function connectDB() {
 
 		// Set connection options
 		await mongoose.connect(CONFIG.MONGODB_URI, {
-			serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
-			heartbeatFrequencyMS: 30000, // Check connection every 30 seconds
+			serverSelectionTimeoutMS: 5000,
+			heartbeatFrequencyMS: 30000,
+			writeConcern: {
+				w: "majority",
+				wtimeout: 5000,
+			},
+			retryWrites: true,
+			retryReads: true,
 		});
 
 		// Log detailed connection info

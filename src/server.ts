@@ -13,6 +13,7 @@ import dbPlugin from "./plugins/mongodb";
 import userRoutes from "./routes/v1/users";
 import { Logger } from "./services/logger.service";
 import { getHelmetConfig } from "./config/helmet";
+import { TokenCleanupService } from "./services/token-cleanup.service";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
@@ -68,6 +69,19 @@ export async function buildServer(): Promise<FastifyInstance> {
 
 		// Register database plugin
 		await server.register(dbPlugin);
+
+		// Start token cleanup service
+		const tokenCleanup = TokenCleanupService.getInstance();
+		await tokenCleanup.start();
+
+		// Register shutdown hook
+		server.addHook("onClose", async (_instance) => {
+			// Stop token cleanup service
+			await tokenCleanup.stop();
+
+			// Log shutdown
+			Logger.info("Shutting down token cleanup service", "Server");
+		});
 
 		// Add request logging hook if in debug mode
 		if (CONFIG.LOG_LEVEL === "debug") {

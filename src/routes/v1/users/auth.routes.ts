@@ -46,7 +46,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 			},
 			config: {
 				rateLimit: {
-					max: 10,
+					max: 50,
 					timeWindow: "15 minute",
 				},
 			},

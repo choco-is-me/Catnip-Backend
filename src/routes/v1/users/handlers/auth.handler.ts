@@ -372,6 +372,8 @@ export class AuthHandler {
 		}
 	}
 
+	// In src/routes/v1/users/handlers/auth.handler.ts
+
 	async logout(request: FastifyRequest, reply: FastifyReply) {
 		try {
 			Logger.debug("Processing logout request", "Auth");
@@ -402,7 +404,8 @@ export class AuthHandler {
 					await JWTService.invalidateToken(
 						decodedToken.jti,
 						expiryTime,
-						decodedToken.familyId
+						decodedToken.familyId,
+						true // Add this parameter
 					);
 					accessTokenInvalidated = true;
 					Logger.debug(
@@ -432,7 +435,8 @@ export class AuthHandler {
 						await JWTService.invalidateToken(
 							decodedRefresh.jti,
 							expiryTime,
-							decodedRefresh.familyId
+							decodedRefresh.familyId,
+							true // Add this parameter
 						);
 						refreshTokenInvalidated = true;
 						Logger.debug(
