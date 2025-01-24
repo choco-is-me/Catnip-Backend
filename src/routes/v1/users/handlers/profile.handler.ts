@@ -3,13 +3,18 @@ import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
 import { Card } from "../../../../models/Card";
+import { TokenFamily } from "../../../../models/Token";
 import { User } from "../../../../models/User";
-import { ParamsWithUserId, UpdateUserBody } from "../../../../schemas";
+import {
+	ChangePasswordBody,
+	ParamsWithUserId,
+	UpdateUserBody,
+} from "../../../../schemas";
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
-	createError,
 	createBusinessError,
+	createError,
 	createSecurityError,
 	ErrorTypes,
 	sendError,
@@ -466,6 +471,81 @@ export class ProfileHandler {
 		} finally {
 			session.endSession();
 			Logger.debug("MongoDB session ended", "ProfileHandler");
+		}
+	}
+
+	async changePassword(
+		request: FastifyRequest<{
+			Params: Static<typeof ParamsWithUserId>;
+			Body: Static<typeof ChangePasswordBody>;
+		}>,
+		reply: FastifyReply
+	) {
+		const session = await mongoose.startSession();
+		session.startTransaction();
+
+		try {
+			const { userId } = request.params;
+			const { newPassword } = request.body;
+
+			Logger.debug(
+				`Starting password change for user: ${userId}`,
+				"ProfileHandler"
+			);
+
+			if (!mongoose.Types.ObjectId.isValid(userId)) {
+				await session.abortTransaction();
+				return sendError(reply, CommonErrors.invalidFormat("user ID"));
+			}
+
+			const user = await User.findById(userId).session(session);
+			if (!user) {
+				await session.abortTransaction();
+				return sendError(reply, CommonErrors.userNotFound());
+			}
+
+			// Update password
+			user.password = newPassword;
+			await user.save({ session });
+
+			// Invalidate all token families
+			const families = await TokenFamily.find({
+				familyId: { $exists: true },
+			}).session(session);
+			for (const family of families) {
+				await TokenFamily.updateOne(
+					{ familyId: family.familyId },
+					{ reuseDetected: true }
+				).session(session);
+			}
+
+			await session.commitTransaction();
+			Logger.info(
+				`Password changed successfully for user: ${userId}`,
+				"ProfileHandler"
+			);
+
+			return reply.code(200).send({
+				success: true,
+				data: {
+					message: "Password changed successfully",
+				},
+			});
+		} catch (error) {
+			await session.abortTransaction();
+			Logger.error(error as Error, "ProfileHandler");
+
+			if (error instanceof mongoose.Error) {
+				return sendError(
+					reply,
+					CommonErrors.databaseError("password change")
+				);
+			}
+
+			return sendError(reply, error as Error);
+		} finally {
+			session.endSession();
+			Logger.debug("Password change session ended", "ProfileHandler");
 		}
 	}
 }

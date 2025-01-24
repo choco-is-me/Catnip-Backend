@@ -3,15 +3,15 @@ import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
 import { CONFIG } from "../../../../config";
+import { TokenFamily } from "../../../../models/Token";
 import { User } from "../../../../models/User";
 import { CreateUserBody, LoginRequestBody } from "../../../../schemas";
 import JWTService from "../../../../services/jwt.service";
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
-	createError,
-	createSecurityError,
 	createBusinessError,
+	createError,
 	ErrorTypes,
 	sendError,
 } from "../../../../utils/error-handler";
@@ -44,15 +44,6 @@ export class AuthHandler {
 			);
 			return user;
 		} catch (error) {
-			if (error instanceof mongoose.Error.ValidationError) {
-				throw createError(
-					400,
-					ErrorTypes.VALIDATION_ERROR,
-					Object.values(error.errors)
-						.map((err) => err.message)
-						.join(", ")
-				);
-			}
 			Logger.error(error as Error, "Auth");
 			throw CommonErrors.databaseError("credential validation");
 		}
@@ -129,12 +120,14 @@ export class AuthHandler {
 	}
 
 	async refreshToken(request: FastifyRequest, reply: FastifyReply) {
+		const session = await mongoose.startSession();
+		session.startTransaction();
+
 		try {
 			Logger.debug("Processing refresh token request", "Auth");
 
 			const refreshToken = request.cookies.refreshToken;
 			if (!refreshToken) {
-				Logger.warn("Refresh token missing from request", "Auth");
 				return sendError(
 					reply,
 					CommonErrors.cookieMissing("refreshToken")
@@ -147,6 +140,8 @@ export class AuthHandler {
 					request
 				);
 				AuthHandler.setRefreshTokenCookie(reply, tokens.refreshToken);
+
+				await session.commitTransaction();
 
 				Logger.info("Tokens refreshed successfully", "Auth");
 				return reply.code(200).send({
@@ -162,33 +157,32 @@ export class AuthHandler {
 					AuthHandler.clearRefreshTokenCookie(reply);
 
 					switch (error.message) {
-						case "Token fingerprint mismatch":
+						case "TOKEN_FINGERPRINT_MISMATCH":
 							return sendError(
 								reply,
 								CommonErrors.fingerprintMismatch()
 							);
-						case "Token has expired":
+						case "TOKEN_EXPIRED":
 							return sendError(
 								reply,
 								CommonErrors.tokenExpired()
 							);
-						case "Token has been invalidated":
+						case "TOKEN_INVALIDATED":
 							return sendError(
 								reply,
 								CommonErrors.tokenRevoked()
 							);
-						case "Invalid token type":
+						case "INVALID_TOKEN_TYPE":
 							return sendError(
 								reply,
 								CommonErrors.invalidTokenType()
 							);
-						case "Token family has been compromised":
+						case "TOKEN_FAMILY_COMPROMISED":
 							return sendError(
 								reply,
-								createSecurityError("Token reuse detected")
+								CommonErrors.suspiciousActivity()
 							);
-						case "Refresh token exceeded maximum lifetime":
-						case "Invalid token family":
+						case "TOKEN_FAMILY_EXPIRED":
 							return sendError(
 								reply,
 								CommonErrors.sessionExpired()
@@ -200,11 +194,14 @@ export class AuthHandler {
 							);
 					}
 				}
-				return sendError(reply, error as Error);
+				throw error;
 			}
 		} catch (error) {
+			await session.abortTransaction();
 			Logger.error(error as Error, "Auth");
 			return sendError(reply, error as Error);
+		} finally {
+			session.endSession();
 		}
 	}
 
@@ -212,46 +209,33 @@ export class AuthHandler {
 		request: FastifyRequest<{ Body: Static<typeof LoginRequestBody> }>,
 		reply: FastifyReply
 	) {
+		const session = await mongoose.startSession();
+		session.startTransaction();
+
 		try {
 			Logger.debug("Processing login request", "Auth");
 			const { email, password } = request.body;
-
-			// Validate required fields
-			if (!email || !password) {
-				const missingFields =
-					!email && !password
-						? ["email", "password"]
-						: !email
-						? ["email"]
-						: ["password"];
-				Logger.warn(
-					`Login attempt with missing fields: ${missingFields.join(
-						", "
-					)}`,
-					"Auth"
-				);
-				return sendError(
-					reply,
-					CommonErrors.missingFields(missingFields)
-				);
-			}
-
-			// Validate email format
-			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-			if (!emailRegex.test(email)) {
-				Logger.warn(
-					`Login attempt with invalid email format: ${email}`,
-					"Auth"
-				);
-				return sendError(reply, CommonErrors.invalidFormat("email"));
-			}
 
 			const user = await AuthHandler.validateLoginCredentials(
 				email,
 				password
 			);
+
 			if (!user) {
 				return sendError(reply, CommonErrors.invalidCredentials());
+			}
+
+			// Check for existing active sessions
+			const existingSessions =
+				await TokenFamily.findActiveSessionsByUserId(
+					user._id.toString()
+				);
+			if (existingSessions.length >= 5) {
+				// Limit concurrent sessions
+				return sendError(
+					reply,
+					createBusinessError("Maximum active sessions reached")
+				);
 			}
 
 			// Generate tokens with fingerprinting
@@ -260,6 +244,8 @@ export class AuthHandler {
 				request
 			);
 			AuthHandler.setRefreshTokenCookie(reply, tokens.refreshToken);
+
+			await session.commitTransaction();
 
 			Logger.info(`User logged in successfully: ${user._id}`, "Auth");
 
@@ -273,6 +259,7 @@ export class AuthHandler {
 				},
 			});
 		} catch (error) {
+			await session.abortTransaction();
 			Logger.error(error as Error, "Auth");
 
 			if (error instanceof mongoose.Error.ValidationError) {
@@ -289,6 +276,8 @@ export class AuthHandler {
 			}
 
 			return sendError(reply, error as Error);
+		} finally {
+			session.endSession();
 		}
 	}
 
@@ -339,19 +328,6 @@ export class AuthHandler {
 			await session.abortTransaction();
 			Logger.error(error as Error, "Auth");
 
-			if (error instanceof mongoose.Error.ValidationError) {
-				return sendError(
-					reply,
-					createError(
-						400,
-						ErrorTypes.VALIDATION_ERROR,
-						Object.values(error.errors)
-							.map((err) => err.message)
-							.join(", ")
-					)
-				);
-			}
-
 			if (error instanceof mongoose.Error) {
 				if (
 					error.name === "MongoServerError" &&
@@ -372,8 +348,6 @@ export class AuthHandler {
 		}
 	}
 
-	// In src/routes/v1/users/handlers/auth.handler.ts
-
 	async logout(request: FastifyRequest, reply: FastifyReply) {
 		try {
 			Logger.debug("Processing logout request", "Auth");
@@ -386,97 +360,85 @@ export class AuthHandler {
 			const authHeader = request.headers.authorization;
 			if (!authHeader?.startsWith("Bearer ")) {
 				Logger.warn("Logout attempt without Bearer token", "Auth");
-				return sendError(
-					reply,
-					createSecurityError("Invalid authentication header")
-				);
+				return sendError(reply, CommonErrors.noToken());
 			}
 
 			const token = authHeader.split(" ")[1];
-			let accessTokenInvalidated = false;
-			let refreshTokenInvalidated = false;
+			const session = await mongoose.startSession();
+			session.startTransaction();
 
-			// Invalidate access token
 			try {
 				const decodedToken = await JWTService.verifyToken(token, false);
-				if (decodedToken.jti) {
-					const expiryTime = Date.now() + 5 * 60 * 1000; // 5 minutes
-					await JWTService.invalidateToken(
-						decodedToken.jti,
-						expiryTime,
-						decodedToken.familyId,
-						true // Add this parameter
-					);
-					accessTokenInvalidated = true;
-					Logger.debug(
-						`Access token invalidated: ${decodedToken.jti}`,
-						"Auth"
-					);
-				}
-			} catch (accessError) {
-				Logger.warn(
-					`Access token verification failed: ${
-						(accessError as Error).message
-					}`,
-					"Auth"
-				);
-			}
 
-			// Invalidate refresh token
-			const refreshToken = request.cookies.refreshToken;
-			if (refreshToken) {
-				try {
+				// Invalidate access token
+				await JWTService.invalidateToken(
+					decodedToken.jti,
+					"access",
+					decodedToken.familyId,
+					true
+				);
+
+				// Invalidate refresh token if present
+				const refreshToken = request.cookies.refreshToken;
+				if (refreshToken) {
 					const decodedRefresh = await JWTService.verifyToken(
 						refreshToken,
 						true
 					);
-					if (decodedRefresh.jti) {
-						const expiryTime = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
-						await JWTService.invalidateToken(
-							decodedRefresh.jti,
-							expiryTime,
-							decodedRefresh.familyId,
-							true // Add this parameter
-						);
-						refreshTokenInvalidated = true;
-						Logger.debug(
-							`Refresh token invalidated: ${decodedRefresh.jti}`,
-							"Auth"
-						);
-					}
-				} catch (refreshError) {
-					Logger.warn(
-						`Refresh token verification failed: ${
-							(refreshError as Error).message
-						}`,
-						"Auth"
+					await JWTService.invalidateToken(
+						decodedRefresh.jti,
+						"refresh",
+						decodedRefresh.familyId,
+						true
 					);
 				}
-			}
 
-			AuthHandler.clearRefreshTokenCookie(reply);
+				AuthHandler.clearRefreshTokenCookie(reply);
+				await session.commitTransaction();
 
-			if (!accessTokenInvalidated && !refreshTokenInvalidated) {
-				return sendError(
-					reply,
-					createBusinessError("No active tokens to invalidate")
+				Logger.info(
+					`User ${request.user.userId} logged out successfully`,
+					"Auth"
 				);
+
+				return reply.code(200).send({
+					success: true,
+					data: {
+						message: "Logged out successfully",
+					},
+				});
+			} catch (error) {
+				await session.abortTransaction();
+
+				if (error instanceof Error) {
+					switch (error.message) {
+						case "TOKEN_EXPIRED":
+							return sendError(
+								reply,
+								CommonErrors.tokenExpired()
+							);
+						case "TOKEN_INVALIDATED":
+							return sendError(
+								reply,
+								CommonErrors.tokenRevoked()
+							);
+						default:
+							return sendError(
+								reply,
+								CommonErrors.invalidToken()
+							);
+					}
+				}
+				throw error;
+			} finally {
+				session.endSession();
 			}
-
-			Logger.info(
-				`User ${request.user.userId} logged out successfully. Access token invalidated: ${accessTokenInvalidated}, Refresh token invalidated: ${refreshTokenInvalidated}`,
-				"Auth"
-			);
-
-			return reply.code(200).send({
-				success: true,
-				data: {
-					message: "Logged out successfully",
-				},
-			});
 		} catch (error) {
 			Logger.error(error as Error, "Auth");
-			return sendError(reply, error as Error);
+			return sendError(
+				reply,
+				CommonErrors.internalError("Logout failed")
+			);
 		}
 	}
 }

@@ -14,6 +14,11 @@ export interface ICard extends Document {
 	updatedAt: Date;
 }
 
+interface EncryptedData {
+	encryptedValue: string;
+	iv: string;
+}
+
 const CardSchema = new Schema<ICard>(
 	{
 		userId: {
@@ -64,29 +69,43 @@ CardSchema.statics.compareCardNumbers = async function (
 function encrypt(text: string): string {
 	try {
 		Logger.debug("Encrypting sensitive card data", "CardEncryption");
+		// Generate a new IV for each encryption
+		const iv = crypto.randomBytes(16);
 		const cipher = crypto.createCipheriv(
 			"aes-256-cbc",
 			Buffer.from(CONFIG.ENCRYPTION_KEY),
-			Buffer.from(CONFIG.ENCRYPTION_IV)
+			iv
 		);
 		let encrypted = cipher.update(text, "utf8", "hex");
 		encrypted += cipher.final("hex");
-		return encrypted;
+
+		// Combine IV and encrypted data
+		const result: EncryptedData = {
+			encryptedValue: encrypted,
+			iv: iv.toString("hex"),
+		};
+
+		return JSON.stringify(result);
 	} catch (error) {
 		Logger.error(error as Error, "CardEncryption");
 		throw new Error("Encryption failed");
 	}
 }
 
-function decrypt(encrypted: string): string {
+function decrypt(encryptedJson: string): string {
 	try {
 		Logger.debug("Decrypting card data", "CardDecryption");
+		const { encryptedValue, iv } = JSON.parse(
+			encryptedJson
+		) as EncryptedData;
+
 		const decipher = crypto.createDecipheriv(
 			"aes-256-cbc",
 			Buffer.from(CONFIG.ENCRYPTION_KEY),
-			Buffer.from(CONFIG.ENCRYPTION_IV)
+			Buffer.from(iv, "hex")
 		);
-		let decrypted = decipher.update(encrypted, "hex", "utf8");
+
+		let decrypted = decipher.update(encryptedValue, "hex", "utf8");
 		decrypted += decipher.final("utf8");
 		return decrypted;
 	} catch (error) {

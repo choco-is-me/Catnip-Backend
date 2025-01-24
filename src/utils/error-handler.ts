@@ -270,6 +270,24 @@ export const CommonErrors = {
 			ErrorTypes.INVALID_IP,
 			"Access denied from this IP address"
 		),
+
+	// Server Errors
+	internalError: (message: string = "Internal server error") =>
+		createError(500, ErrorTypes.INTERNAL_ERROR, message),
+
+	configError: (component: string) =>
+		createError(
+			500,
+			ErrorTypes.INTERNAL_ERROR,
+			`Configuration error in ${component}`
+		),
+
+	serviceError: (service: string, action: string) =>
+		createError(
+			500,
+			ErrorTypes.INTERNAL_ERROR,
+			`${service} service error during ${action}`
+		),
 };
 
 // Enhanced error handling function

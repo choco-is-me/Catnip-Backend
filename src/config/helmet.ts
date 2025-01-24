@@ -18,20 +18,38 @@ export const getHelmetConfig = (): FastifyHelmetOptions => {
 				frameSrc: ["'none'"],
 				objectSrc: ["'none'"],
 				workerSrc: ["'self'"],
+				// Enhanced CSP directives
+				baseUri: ["'self'"],
+				formAction: ["'self'"],
+				frameAncestors: ["'none'"],
+				manifestSrc: ["'self'"],
+				mediaSrc: ["'self'"],
+				upgradeInsecureRequests: [],
+				blockAllMixedContent: [],
 			},
 		},
 		hsts: {
-			maxAge: 15552000,
+			maxAge: 15552000, // 180 days
 			includeSubDomains: true,
 			preload: true,
 		},
 		referrerPolicy: {
 			policy: "strict-origin-when-cross-origin",
 		},
-		// Additional standard security headers
+		// Additional security headers
 		hidePoweredBy: true,
 		noSniff: true,
 		xssFilter: true,
+		// Enhanced security headers
+		dnsPrefetchControl: {
+			allow: false,
+		},
+		frameguard: {
+			action: "deny",
+		},
+		crossOriginOpenerPolicy: {
+			policy: "same-origin",
+		},
 	};
 
 	if (CONFIG.NODE_ENV === "development") {
@@ -45,11 +63,18 @@ export const getHelmetConfig = (): FastifyHelmetOptions => {
 				reportOnly: false,
 				directives: {
 					...baseConfig.contentSecurityPolicy.directives,
-					// Add development-specific CSP rules
+					// Development-specific CSP rules
 					scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
 					styleSrc: ["'self'", "'unsafe-inline'"],
+					// Allow connection to development servers
+					connectSrc: ["'self'", "ws:", "wss:"],
 				},
 			};
+
+			// Disable certain strict security measures in development
+			baseConfig.crossOriginEmbedderPolicy = false;
+			baseConfig.crossOriginResourcePolicy = false;
+			baseConfig.crossOriginOpenerPolicy = false;
 		}
 	}
 

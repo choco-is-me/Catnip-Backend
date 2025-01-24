@@ -4,7 +4,7 @@ import { FastifyRequest } from "fastify";
 import { sign, verify } from "jsonwebtoken";
 import mongoose from "mongoose";
 import { CONFIG } from "../config";
-import { InvalidatedToken, TokenFamily } from "../models/Token";
+import { InvalidatedToken, TokenFamily, IDeviceInfo } from "../models/Token";
 import { Logger } from "./logger.service";
 
 interface TokenPayload {
@@ -28,6 +28,20 @@ interface FingerprintData {
 	ipAddress: string;
 	timeZone: string;
 	language: string;
+	// Enhanced fingerprint data
+	forwardedFor?: string;
+	clientIp: string;
+	acceptEncoding: string;
+	acceptLanguage: string;
+	deviceId?: string;
+	// Network info
+	connectionType?: string;
+	isp?: string;
+	// Browser capabilities
+	webglRenderer?: string;
+	hasLocalStorage: boolean;
+	hasSessionStorage: boolean;
+	colorDepth?: number;
 }
 
 class JWTService {
@@ -37,9 +51,19 @@ class JWTService {
 		notBefore: "0s",
 	};
 
-	private static readonly MAX_REFRESH_TOKEN_AGE = JWTService.parse(
-		CONFIG.JWT_REFRESH_EXPIRES_IN
-	);
+	private static getInvalidationPeriod(
+		tokenType: "access" | "refresh"
+	): number {
+		const baseTime =
+			tokenType === "access"
+				? this.parse(CONFIG.JWT_EXPIRES_IN)
+				: this.parse(CONFIG.JWT_REFRESH_EXPIRES_IN);
+
+		// Add a buffer period (20% of token lifetime)
+		return Math.ceil(baseTime * 1.2) * 1000;
+	}
+
+	private static readonly MAX_FAMILY_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 	private static parse(duration: string): number {
 		const unit = duration.slice(-1);
@@ -67,11 +91,72 @@ class JWTService {
 		return value || "";
 	}
 
+	private static extractDeviceInfo(request: FastifyRequest): IDeviceInfo {
+		const headers = request.headers;
+		const userAgent = this.getHeaderValue(headers["user-agent"]);
+
+		// Extract device info from user agent
+		const deviceInfo: IDeviceInfo = {
+			deviceId:
+				this.getHeaderValue(headers["x-device-id"]) ||
+				crypto.randomBytes(16).toString("hex"),
+			lastActive: new Date(),
+			deviceName: userAgent,
+			deviceType: this.getDeviceType(userAgent),
+			browserInfo: this.getBrowserInfo(userAgent),
+			osInfo: this.getOSInfo(userAgent),
+		};
+
+		return deviceInfo;
+	}
+
+	private static getDeviceType(userAgent: string): string {
+		if (/mobile/i.test(userAgent)) return "mobile";
+		if (/tablet/i.test(userAgent)) return "tablet";
+		if (/ipad/i.test(userAgent)) return "tablet";
+		return "desktop";
+	}
+
+	private static getBrowserInfo(userAgent: string): string {
+		const browserRegexes = [
+			/chrome\/([0-9.]+)/i,
+			/firefox\/([0-9.]+)/i,
+			/safari\/([0-9.]+)/i,
+			/edge\/([0-9.]+)/i,
+			/opera\/([0-9.]+)/i,
+		];
+
+		for (const regex of browserRegexes) {
+			const match = userAgent.match(regex);
+			if (match) return match[0];
+		}
+
+		return "unknown";
+	}
+
+	private static getOSInfo(userAgent: string): string {
+		const osRegexes = [
+			/windows nt ([0-9.]+)/i,
+			/mac os x ([0-9._]+)/i,
+			/android ([0-9.]+)/i,
+			/ios ([0-9._]+)/i,
+			/linux/i,
+		];
+
+		for (const regex of osRegexes) {
+			const match = userAgent.match(regex);
+			if (match) return match[0];
+		}
+
+		return "unknown";
+	}
+
 	private static generateFingerprint(
 		request: FastifyRequest
 	): FingerprintData {
 		const headers = request.headers;
 		return {
+			// Basic info
 			userAgent: this.getHeaderValue(headers["user-agent"]),
 			platform: this.getHeaderValue(headers["x-platform"]),
 			screenDimensions: this.getHeaderValue(
@@ -80,12 +165,54 @@ class JWTService {
 			ipAddress: request.ip,
 			timeZone: this.getHeaderValue(headers["x-timezone"]),
 			language: this.getHeaderValue(headers["accept-language"]),
+
+			// Enhanced network info
+			forwardedFor: this.getHeaderValue(headers["x-forwarded-for"]),
+			clientIp: request.ip,
+			acceptEncoding: this.getHeaderValue(headers["accept-encoding"]),
+			acceptLanguage: this.getHeaderValue(headers["accept-language"]),
+			deviceId: this.getHeaderValue(headers["x-device-id"]),
+			connectionType: this.getHeaderValue(headers["x-connection-type"]),
+			isp: this.getHeaderValue(headers["x-isp"]),
+
+			// Browser capabilities
+			webglRenderer: this.getHeaderValue(headers["x-webgl-renderer"]),
+			hasLocalStorage:
+				this.getHeaderValue(headers["x-has-local-storage"]) === "true",
+			hasSessionStorage:
+				this.getHeaderValue(headers["x-has-session-storage"]) ===
+				"true",
+			colorDepth:
+				parseInt(this.getHeaderValue(headers["x-color-depth"])) ||
+				undefined,
 		};
 	}
 
 	private static hashFingerprint(data: FingerprintData): string {
-		const fingerprintStr = Object.values(data).join("|");
+		const fingerprintStr = Object.values(data)
+			.filter((value) => value !== undefined)
+			.join("|");
 		return crypto.createHash("sha256").update(fingerprintStr).digest("hex");
+	}
+
+	private static async validateTokenFamily(family: any): Promise<void> {
+		if (Date.now() - family.createdAt.getTime() > this.MAX_FAMILY_AGE) {
+			await TokenFamily.deleteOne({ familyId: family.familyId });
+			throw new Error("TOKEN_FAMILY_EXPIRED");
+		}
+
+		const recentRotations = await TokenFamily.countDocuments({
+			familyId: family.familyId,
+			lastRotation: { $gte: new Date(Date.now() - 5 * 60 * 1000) },
+		});
+
+		if (recentRotations > 10) {
+			await TokenFamily.updateOne(
+				{ familyId: family.familyId },
+				{ reuseDetected: true }
+			);
+			throw new Error("SUSPICIOUS_ROTATION_ACTIVITY");
+		}
 	}
 
 	private static async validateFingerprint(
@@ -119,31 +246,43 @@ class JWTService {
 
 	static async invalidateToken(
 		jti: string,
-		expiryTime: number,
+		tokenType: "access" | "refresh",
 		familyId?: string,
 		isLogout: boolean = false
 	): Promise<void> {
-		try {
-			// Create invalidated token record
-			await InvalidatedToken.create({
-				jti,
-				expiryTime: new Date(expiryTime),
-				tokenType: familyId ? "refresh" : "access",
-				familyId,
-			});
+		const session = await mongoose.startSession();
+		session.startTransaction();
 
-			// Only mark token family as compromised if it's not a normal logout
-			if (familyId && !isLogout) {
-				await TokenFamily.updateOne(
-					{ familyId },
-					{ reuseDetected: true }
-				);
+		try {
+			const invalidationPeriod = this.getInvalidationPeriod(tokenType);
+			const expiryTime = new Date(Date.now() + invalidationPeriod);
+
+			// Create invalidated token with dynamic expiry
+			await InvalidatedToken.create(
+				[
+					{
+						jti,
+						expiryTime,
+						tokenType,
+						familyId,
+					},
+				],
+				{ session }
+			);
+
+			// If it's a refresh token and not a logout, check family
+			if (tokenType === "refresh" && !isLogout && familyId) {
+				await this.checkAndCleanupFamily(familyId, session);
 			}
 
+			await session.commitTransaction();
 			Logger.debug(`Token invalidated: ${jti}`, "JWTService");
 		} catch (error) {
+			await session.abortTransaction();
 			Logger.error(error as Error, "JWTService");
-			throw new Error("Failed to invalidate token");
+			throw new Error("TOKEN_INVALIDATION_FAILED");
+		} finally {
+			session.endSession();
 		}
 	}
 
@@ -160,9 +299,12 @@ class JWTService {
 		token: string,
 		isRefresh = false
 	): Promise<TokenPayload & { jti: string }> {
+		const session = await mongoose.startSession();
+		session.startTransaction();
+
 		try {
 			if (!CONFIG.JWT_SECRET || !CONFIG.JWT_REFRESH_SECRET) {
-				throw new Error("JWT secrets not configured properly");
+				throw new Error("JWT_SECRETS_NOT_CONFIGURED");
 			}
 
 			const secret = isRefresh
@@ -178,67 +320,91 @@ class JWTService {
 
 			const payload = decoded.payload as TokenPayload & { jti: string };
 
+			// Basic validation
 			if (!payload.sub || payload.sub !== payload.userId) {
-				throw new Error("Invalid token subject");
+				throw new Error("INVALID_TOKEN_SUBJECT");
 			}
 
-			if (isRefresh && payload.type !== "refresh") {
-				throw new Error("Invalid token type");
-			}
-			if (!isRefresh && payload.type !== "access") {
-				throw new Error("Invalid token type");
+			if (
+				(isRefresh && payload.type !== "refresh") ||
+				(!isRefresh && payload.type !== "access")
+			) {
+				throw new Error("INVALID_TOKEN_TYPE");
 			}
 
 			if (await this.isTokenInvalidated(payload.jti)) {
-				throw new Error("Token has been invalidated");
+				throw new Error("TOKEN_INVALIDATED");
 			}
 
 			if (isRefresh && payload.familyId) {
 				const family = await TokenFamily.findOne({
 					familyId: payload.familyId,
-				});
-				if (!family) {
-					throw new Error("Invalid token family");
-				}
-				if (family.reuseDetected) {
-					throw new Error("Token family has been compromised");
-				}
-				if (family.validUntil < new Date()) {
-					throw new Error("Token family has expired");
-				}
+				}).session(session);
+
+				if (!family) throw new Error("INVALID_TOKEN_FAMILY");
+				if (family.reuseDetected)
+					throw new Error("TOKEN_FAMILY_COMPROMISED");
+				if (family.validUntil < new Date())
+					throw new Error("TOKEN_FAMILY_EXPIRED");
+
+				await this.validateTokenFamily(family);
 			}
 
-			if (isRefresh && payload.iat) {
-				const now = Math.floor(Date.now() / 1000);
-				if (now - payload.iat > this.MAX_REFRESH_TOKEN_AGE) {
-					throw new Error("Refresh token exceeded maximum lifetime");
-				}
-			}
-
+			await session.commitTransaction();
 			return payload;
 		} catch (error) {
+			await session.abortTransaction();
 			if ((error as Error).name === "TokenExpiredError") {
-				throw new Error("Token has expired");
+				throw new Error("TOKEN_EXPIRED");
 			}
 			throw error;
+		} finally {
+			session.endSession();
+		}
+	}
+
+	private static async checkAndCleanupFamily(
+		familyId: string,
+		session: mongoose.ClientSession
+	): Promise<void> {
+		const family = await TokenFamily.findOne({ familyId }).session(session);
+		if (!family) return;
+
+		// Check for suspicious activity
+		const recentInvalidations = await InvalidatedToken.countDocuments({
+			familyId,
+			createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) },
+		}).session(session);
+
+		if (recentInvalidations > 5) {
+			await TokenFamily.updateOne(
+				{ familyId },
+				{ reuseDetected: true }
+			).session(session);
+
+			throw new Error("TOKEN_FAMILY_COMPROMISED");
 		}
 	}
 
 	private static async createTokenFamily(
-		fingerprintHash: string
+		fingerprintHash: string,
+		userId: string,
+		request: FastifyRequest
 	): Promise<string> {
 		const familyId = crypto.randomBytes(32).toString("hex");
 		const now = new Date();
-		const validUntil = new Date(
-			now.getTime() + this.MAX_REFRESH_TOKEN_AGE * 1000
-		);
+		const validUntil = new Date(now.getTime() + this.MAX_FAMILY_AGE);
+
+		const deviceInfo = this.extractDeviceInfo(request);
 
 		await TokenFamily.create({
 			familyId,
+			userId,
 			fingerprint: fingerprintHash,
 			validUntil,
 			lastRotation: now,
 			reuseDetected: false,
+			deviceInfo,
 		});
 
 		return familyId;
@@ -260,7 +426,12 @@ class JWTService {
 			const fingerprint = this.generateFingerprint(request);
 			const fingerprintHash = this.hashFingerprint(fingerprint);
 
-			const familyId = await this.createTokenFamily(fingerprintHash);
+			// Fixed: Pass all required arguments
+			const familyId = await this.createTokenFamily(
+				fingerprintHash,
+				userId, // Add userId argument
+				request // Add request argument
+			);
 
 			Logger.debug(`Generating tokens for user: ${userId}`, "JWTService");
 
@@ -309,17 +480,23 @@ class JWTService {
 		refreshToken: string,
 		request: FastifyRequest
 	): Promise<TokenPair> {
+		const session = await mongoose.startSession();
+		session.startTransaction();
+
 		try {
-			Logger.debug("Attempting to rotate tokens", "JWTService");
 			const decoded = await this.verifyToken(refreshToken, true);
 
-			// Find token family without transaction first
-			const family = await TokenFamily.findOne({
-				familyId: decoded.familyId,
-			});
+			const family = await TokenFamily.findOneAndUpdate(
+				{ familyId: decoded.familyId },
+				{
+					lastRotation: new Date(),
+					$set: { "deviceInfo.lastActive": new Date() },
+				},
+				{ session, new: true }
+			);
 
 			if (!family) {
-				throw new Error("Invalid token family");
+				throw new Error("INVALID_TOKEN_FAMILY");
 			}
 
 			// Validate fingerprint
@@ -329,43 +506,30 @@ class JWTService {
 				await TokenFamily.updateOne(
 					{ familyId: decoded.familyId },
 					{ reuseDetected: true }
-				);
-				throw new Error("Token fingerprint mismatch");
+				).session(session);
+				throw new Error("TOKEN_FINGERPRINT_MISMATCH");
 			}
-
-			if (family.reuseDetected) {
-				await TokenFamily.deleteOne({ familyId: decoded.familyId });
-				throw new Error("Token family has been compromised");
-			}
-
-			// Update last rotation
-			await TokenFamily.updateOne(
-				{ familyId: decoded.familyId },
-				{ lastRotation: new Date() }
-			);
 
 			// Invalidate old refresh token
-			await InvalidatedToken.create({
-				jti: decoded.jti,
-				expiryTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-				tokenType: "refresh",
-				familyId: decoded.familyId,
-			});
+			await this.invalidateToken(
+				decoded.jti,
+				"refresh",
+				decoded.familyId
+			);
 
+			// Generate new tokens
 			const newTokens = await this.generateTokens(
 				decoded.userId,
 				request
 			);
 
-			Logger.info(
-				`Tokens rotated successfully for user: ${decoded.userId}`,
-				"JWTService"
-			);
-
+			await session.commitTransaction();
 			return newTokens;
 		} catch (error) {
-			Logger.error(error as Error, "JWTService");
+			await session.abortTransaction();
 			throw error;
+		} finally {
+			session.endSession();
 		}
 	}
 }

@@ -13,12 +13,13 @@ import {
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
-	createError,
 	createBusinessError,
+	createError,
 	createSecurityError,
 	ErrorTypes,
 	sendError,
 } from "../../../../utils/error-handler";
+import { withTransaction } from "../../../../utils/transaction.utils";
 
 export class CardsHandler {
 	private static async checkForDuplicateCard(
@@ -129,14 +130,10 @@ export class CardsHandler {
 		}>,
 		reply: FastifyReply
 	) {
-		const session = await mongoose.startSession();
-		session.startTransaction();
-
-		try {
+		return withTransaction(async (session) => {
 			const { userId } = request.params;
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
-				await session.abortTransaction();
-				return sendError(reply, CommonErrors.invalidFormat("user ID"));
+				throw CommonErrors.invalidFormat("user ID");
 			}
 
 			const cardData = {
@@ -146,43 +143,33 @@ export class CardsHandler {
 			};
 
 			Logger.debug(
-				`Starting card creation transaction for user: ${userId}`,
+				`Starting card creation for user: ${userId}`,
 				"CardsHandler"
 			);
 
 			// Validate user existence
 			const user = await User.findById(userId).session(session);
 			if (!user) {
-				await session.abortTransaction();
 				Logger.warn(
 					`Attempted to add card for non-existent user: ${userId}`,
 					"CardsHandler"
 				);
-				return sendError(reply, CommonErrors.userNotFound());
+				throw CommonErrors.userNotFound();
 			}
 
 			// Check user's card limit
 			const cardCount = await Card.countDocuments({ userId }).session(
 				session
 			);
-			const MAX_CARDS_PER_USER = 5; // Configure this based on your requirements
+			const MAX_CARDS_PER_USER = 5;
 			if (cardCount >= MAX_CARDS_PER_USER) {
-				await session.abortTransaction();
-				return sendError(
-					reply,
-					createBusinessError(
-						`Maximum card limit (${MAX_CARDS_PER_USER}) reached`
-					)
+				throw createBusinessError(
+					`Maximum card limit (${MAX_CARDS_PER_USER}) reached`
 				);
 			}
 
 			// Validate card data
-			try {
-				CardsHandler.validateCardData(cardData);
-			} catch (validationError) {
-				await session.abortTransaction();
-				return sendError(reply, validationError as Error);
-			}
+			CardsHandler.validateCardData(cardData);
 
 			// Check for duplicate card
 			const { isDuplicate, existingUserId } =
@@ -192,24 +179,17 @@ export class CardsHandler {
 				);
 
 			if (isDuplicate) {
-				await session.abortTransaction();
 				if (existingUserId && existingUserId !== userId) {
 					Logger.warn(
 						`Attempt to add card registered to another user. Requesting user: ${userId}, Card owner: ${existingUserId}`,
 						"CardsHandler"
 					);
-					return sendError(
-						reply,
-						createSecurityError(
-							"This card is registered to another account"
-						)
+					throw createSecurityError(
+						"This card is registered to another account"
 					);
 				}
-				return sendError(
-					reply,
-					createBusinessError(
-						"This card is already registered to your account"
-					)
+				throw createBusinessError(
+					"This card is already registered to your account"
 				);
 			}
 
@@ -219,84 +199,41 @@ export class CardsHandler {
 				userId,
 			});
 
-			try {
-				await newCard.save({ session });
-				Logger.debug(
-					`Card saved successfully: ${newCard._id}`,
-					"CardsHandler"
-				);
+			await newCard.save({ session });
+			Logger.debug(
+				`Card saved successfully: ${newCard._id}`,
+				"CardsHandler"
+			);
 
-				// Handle default card status
-				if (cardData.isDefault) {
-					await Card.updateMany(
-						{
-							userId,
-							_id: { $ne: newCard._id },
-							isDefault: true,
-						},
-						{ isDefault: false },
-						{ session }
-					);
-				}
-
-				await session.commitTransaction();
-				Logger.info(
-					`Card added successfully for user ${userId}: ${newCard._id}`,
-					"CardsHandler"
-				);
-
-				return reply.code(201).send({
-					success: true,
-					data: {
-						card: {
-							...newCard.toObject(),
-							createdAt: newCard.createdAt.toISOString(),
-							updatedAt: newCard.updatedAt.toISOString(),
-						},
+			// Handle default card status
+			if (cardData.isDefault) {
+				await Card.updateMany(
+					{
+						userId,
+						_id: { $ne: newCard._id },
+						isDefault: true,
 					},
-				});
-			} catch (saveError) {
-				await session.abortTransaction();
-				if (saveError instanceof mongoose.Error.ValidationError) {
-					return sendError(
-						reply,
-						createError(
-							400,
-							ErrorTypes.VALIDATION_ERROR,
-							Object.values(saveError.errors)
-								.map((err) => err.message)
-								.join(", ")
-						)
-					);
-				}
-				throw saveError;
-			}
-		} catch (error) {
-			await session.abortTransaction();
-
-			if (error instanceof mongoose.Error) {
-				if (error instanceof mongoose.Error.CastError) {
-					return sendError(
-						reply,
-						createError(
-							400,
-							ErrorTypes.INVALID_FORMAT,
-							`Invalid format for ${error.path}`
-						)
-					);
-				}
-
-				return sendError(
-					reply,
-					CommonErrors.databaseError("card creation")
+					{ isDefault: false },
+					{ session }
 				);
 			}
 
-			return sendError(reply, error as Error);
-		} finally {
-			session.endSession();
-			Logger.debug("MongoDB session ended", "CardsHandler");
-		}
+			Logger.info(
+				`Card added successfully for user ${userId}: ${newCard._id}`,
+				"CardsHandler"
+			);
+
+			return reply.code(201).send({
+				success: true,
+				data: {
+					card: {
+						...newCard.toObject(),
+						createdAt: newCard.createdAt.toISOString(),
+						updatedAt: newCard.updatedAt.toISOString(),
+					},
+				},
+			});
+		}, "CardsHandler");
 	}
 
 	async getCards(
@@ -410,20 +347,15 @@ export class CardsHandler {
 		}>,
 		reply: FastifyReply
 	) {
-		const session = await mongoose.startSession();
-		session.startTransaction();
-
-		try {
+		return withTransaction(async (session) => {
 			const { userId, cardId } = request.params;
 
 			// Validate IDs
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
-				await session.abortTransaction();
-				return sendError(reply, CommonErrors.invalidFormat("user ID"));
+				throw CommonErrors.invalidFormat("user ID");
 			}
 			if (!mongoose.Types.ObjectId.isValid(cardId)) {
-				await session.abortTransaction();
-				return sendError(reply, CommonErrors.invalidFormat("card ID"));
+				throw CommonErrors.invalidFormat("card ID");
 			}
 
 			// Check user existence
@@ -431,8 +363,7 @@ export class CardsHandler {
 				session
 			);
 			if (!userExists) {
-				await session.abortTransaction();
-				return sendError(reply, CommonErrors.userNotFound());
+				throw CommonErrors.userNotFound();
 			}
 
 			// Find the card
@@ -440,19 +371,14 @@ export class CardsHandler {
 				session
 			);
 			if (!card) {
-				await session.abortTransaction();
-				return sendError(reply, CommonErrors.cardNotFound());
+				throw CommonErrors.cardNotFound();
 			}
 
 			// Check if card has pending transactions
 			const hasPendingTransactions = false; // Implement based on your business logic
 			if (hasPendingTransactions) {
-				await session.abortTransaction();
-				return sendError(
-					reply,
-					createBusinessError(
-						"Cannot delete card with pending transactions"
-					)
+				throw createBusinessError(
+					"Cannot delete card with pending transactions"
 				);
 			}
 
@@ -478,7 +404,6 @@ export class CardsHandler {
 				}
 			}
 
-			await session.commitTransaction();
 			Logger.info(
 				`Card ${cardId} deleted successfully for user ${userId}`,
 				"CardsHandler"
@@ -490,26 +415,6 @@ export class CardsHandler {
 					message: "Card deleted successfully",
 				},
 			});
-		} catch (error) {
-			await session.abortTransaction();
-
-			if (error instanceof mongoose.Error) {
-				if (error instanceof mongoose.Error.CastError) {
-					return sendError(
-						reply,
-						CommonErrors.invalidFormat(error.path)
-					);
-				}
-				return sendError(
-					reply,
-					CommonErrors.databaseError("card deletion")
-				);
-			}
-
-			return sendError(reply, error as Error);
-		} finally {
-			session.endSession();
-			Logger.debug("MongoDB session ended", "CardsHandler");
-		}
+		}, "CardsHandler");
 	}
 }

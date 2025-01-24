@@ -2,6 +2,8 @@
 import { Static } from "@sinclair/typebox";
 import { FastifyInstance } from "fastify";
 import {
+	ChangePasswordBody,
+	ChangePasswordResponseSchema,
 	DeleteResponseSchema,
 	ErrorResponseSchema,
 	ParamsWithUserId,
@@ -80,6 +82,35 @@ export default async function profileRoutes(fastify: FastifyInstance) {
 			const hasPermission = await fastify.checkOwnership(request, reply);
 			if (!hasPermission) return;
 			return handler.deleteProfile(request, reply);
+		}
+	);
+
+	fastify.put<{
+		Params: Static<typeof ParamsWithUserId>;
+		Body: Static<typeof ChangePasswordBody>;
+	}>(
+		"/:userId/password",
+		{
+			onRequest: [fastify.authenticate],
+			schema: {
+				tags: ["Users"],
+				description:
+					"Change user password (requires prior email verification)",
+				params: ParamsWithUserId,
+				body: ChangePasswordBody,
+				response: {
+					200: ChangePasswordResponseSchema,
+					400: ErrorResponseSchema,
+					401: ErrorResponseSchema,
+					404: ErrorResponseSchema,
+					500: ErrorResponseSchema,
+				},
+			},
+		},
+		async (request, reply) => {
+			const hasPermission = await fastify.checkOwnership(request, reply);
+			if (!hasPermission) return;
+			return handler.changePassword(request, reply);
 		}
 	);
 }

@@ -10,7 +10,7 @@ import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
 import authPlugin from "./middlewares/auth";
 import checkOwnershipPlugin from "./middlewares/checkOwnership";
 import dbPlugin from "./plugins/mongodb";
-import userRoutes from "./routes/v1/users";
+import modifierRoutes from "./routes/v1";
 import { Logger } from "./services/logger.service";
 import { getHelmetConfig } from "./config/helmet";
 import { TokenCleanupService } from "./services/token-cleanup.service";
@@ -28,7 +28,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 			server.addHook("onRequest", (_request, reply, done) => {
 				reply.header(
 					"Permissions-Policy",
-					"accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+					"accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), camera=(), cross-origin-isolated=(), display-capture=(), document-domain=(), encrypted-media=(), execution-while-not-rendered=(), execution-while-out-of-viewport=(), fullscreen=(), geolocation=(), gyroscope=(), keyboard-map=(), magnetometer=(), microphone=(), midi=(), navigation-override=(), payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=(), clipboard-read=(), clipboard-write=(), gamepad=(), speaker-selection=(), conversion-measurement=(), focus-without-user-activation=(), hid=(), idle-detection=(), interest-cohort=(), serial=(), trust-token-redemption=(), window-placement=(), vertical-scroll=()"
 				);
 				done();
 			});
@@ -126,7 +126,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 		});
 
 		// Register all API routes
-		await server.register(userRoutes, { prefix: "/api/v1" });
+		await server.register(modifierRoutes, { prefix: "/api/v1" });
 
 		return server;
 	} catch (err) {

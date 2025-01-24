@@ -16,10 +16,7 @@ export async function connectDB() {
 
 		// Add connection monitoring
 		mongoose.connection.on("error", (error) => {
-			Logger.error(
-				new Error(`MongoDB connection error: ${error.message}`),
-				"MongoDB"
-			);
+			Logger.error(error, "MongoDB");
 		});
 
 		mongoose.connection.on("disconnected", () => {
@@ -42,7 +39,6 @@ export async function connectDB() {
 			retryReads: true,
 		});
 
-		// Log detailed connection info
 		const { host, port, name } = mongoose.connection;
 		Logger.info(
 			`📦 Connected to MongoDB successfully at ${host}:${port}/${name}`,
@@ -50,17 +46,10 @@ export async function connectDB() {
 		);
 		return true;
 	} catch (error) {
-		if (error instanceof Error) {
-			// Log detailed error information
-			Logger.error(
-				new Error(`MongoDB connection failed: ${error.message}`),
-				"MongoDB"
-			);
-			if (error.stack) {
-				Logger.debug(`Stack trace: ${error.stack}`, "MongoDB");
-			}
+		Logger.error(error as Error, "MongoDB");
 
-			// Check for specific MongoDB error types
+		// Special case handling for specific MongoDB errors
+		if (error instanceof Error) {
 			if (error.name === "MongoServerSelectionError") {
 				Logger.error(
 					new Error("Could not connect to any MongoDB servers"),
@@ -74,13 +63,6 @@ export async function connectDB() {
 					"MongoDB"
 				);
 			}
-		} else {
-			Logger.error(
-				new Error(
-					"An unknown error occurred while connecting to MongoDB"
-				),
-				"MongoDB"
-			);
 		}
 		return false;
 	}
@@ -92,15 +74,7 @@ export async function disconnectDB() {
 		await mongoose.disconnect();
 		Logger.info("Successfully disconnected from MongoDB", "MongoDB");
 	} catch (error) {
-		if (error instanceof Error) {
-			Logger.error(
-				new Error(`Error disconnecting from MongoDB: ${error.message}`),
-				"MongoDB"
-			);
-			if (error.stack) {
-				Logger.debug(`Stack trace: ${error.stack}`, "MongoDB");
-			}
-		}
+		Logger.error(error as Error, "MongoDB");
 	}
 }
 

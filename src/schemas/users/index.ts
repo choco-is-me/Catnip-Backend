@@ -4,13 +4,32 @@ import { AddressSchema, ResponseWrapper, Timestamps } from "../common";
 
 // Base user fields without sensitive data
 const UserBaseSchema = Type.Object({
-	email: Type.String({ format: "email" }),
-	firstName: Type.String({ minLength: 1 }),
-	lastName: Type.String({ minLength: 1 }),
-	company: Type.Optional(Type.String()),
+	email: Type.String({
+		format: "email",
+		description: "User's email address, must be unique",
+		examples: ["john.doe@example.com"],
+	}),
+	firstName: Type.String({
+		minLength: 1,
+		description: "User's first name",
+		examples: ["John"],
+	}),
+	lastName: Type.String({
+		minLength: 1,
+		description: "User's last name",
+		examples: ["Doe"],
+	}),
+	company: Type.Optional(
+		Type.String({
+			description: "User's company name if applicable",
+			examples: ["Acme Corp"],
+		})
+	),
 	address: AddressSchema,
 	phoneNumber: Type.String({
 		pattern: "^[+]?[(]?[0-9]{3}[)]?[-s.]?[0-9]{3}[-s.]?[0-9]{4,6}$",
+		description: "Phone number in international format",
+		examples: ["+1-234-567-8900", "(123) 456-7890"],
 	}),
 });
 
@@ -48,6 +67,16 @@ export const CreateUserBody = Type.Intersect([
 	}),
 ]);
 
+export const ChangePasswordBody = Type.Object({
+	newPassword: Type.String({
+		minLength: 8,
+		pattern:
+			"^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$",
+		description:
+			"Password must contain at least 8 characters, including one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)",
+	}),
+});
+
 export const UpdateUserBody = Type.Partial(UserBaseSchema);
 
 // Response schemas
@@ -69,5 +98,11 @@ export const UsersResponseSchema = ResponseWrapper(
 export const DeleteResponseSchema = ResponseWrapper(
 	Type.Object({
 		message: Type.String(),
+	})
+);
+
+export const ChangePasswordResponseSchema = ResponseWrapper(
+	Type.Object({
+		message: Type.Literal("Password changed successfully"),
 	})
 );

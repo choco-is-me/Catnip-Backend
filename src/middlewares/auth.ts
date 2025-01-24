@@ -36,11 +36,23 @@ export default fp(async (fastify) => {
 				const token = authHeader.split(" ")[1];
 
 				try {
-					const decoded = await JWTService.verifyToken(token);
+					// Explicitly specify this is not a refresh token
+					const decoded = await JWTService.verifyToken(token, false);
 
 					if (!decoded.jti) {
 						Logger.warn("Token missing JTI", "Auth");
 						return sendError(reply, CommonErrors.invalidToken());
+					}
+
+					if (decoded.type !== "access") {
+						Logger.warn(
+							"Invalid token type used for authentication",
+							"Auth"
+						);
+						return sendError(
+							reply,
+							CommonErrors.invalidTokenType()
+						);
 					}
 
 					request.user = decoded as JwtPayload & {
@@ -54,14 +66,46 @@ export default fp(async (fastify) => {
 					);
 				} catch (error) {
 					if (error instanceof Error) {
-						if (error.message === "Token has expired") {
-							return sendError(reply, {
-								success: false,
-								error: "Token Expired",
-								message:
-									"Your session has expired. Please log in again.",
-								code: 401,
-							});
+						switch (error.message) {
+							case "TOKEN_EXPIRED":
+								return sendError(
+									reply,
+									CommonErrors.tokenExpired()
+								);
+							case "TOKEN_INVALIDATED":
+								return sendError(
+									reply,
+									CommonErrors.tokenRevoked()
+								);
+							case "INVALID_TOKEN_TYPE":
+								return sendError(
+									reply,
+									CommonErrors.invalidTokenType()
+								);
+							case "TOKEN_FAMILY_COMPROMISED":
+								return sendError(
+									reply,
+									CommonErrors.suspiciousActivity()
+								);
+							case "INVALID_TOKEN_SUBJECT":
+								return sendError(
+									reply,
+									CommonErrors.invalidToken()
+								);
+							case "JWT_SECRETS_NOT_CONFIGURED":
+								Logger.error(
+									new Error("JWT secrets not configured"),
+									"Auth"
+								);
+								return sendError(
+									reply,
+									CommonErrors.configError("JWT service")
+								);
+							default:
+								return sendError(
+									reply,
+									CommonErrors.invalidToken()
+								);
 						}
 					}
 					return sendError(reply, CommonErrors.invalidToken());

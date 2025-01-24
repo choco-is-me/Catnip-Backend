@@ -76,7 +76,7 @@ export const CONFIG: Config = {
 	COOKIE_SECURE: process.env.NODE_ENV === "production",
 	COOKIE_MAX_AGE: 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
 	JWT_SECRET: process.env.JWT_SECRET!, // Required
-	JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "5m",
+	JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "10s",
 	JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET!, // Required
 	JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
 	LOG_LEVEL: (process.env.LOG_LEVEL as Config["LOG_LEVEL"]) || "info",
