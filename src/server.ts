@@ -14,12 +14,24 @@ import modifierRoutes from "./routes/v1";
 import { Logger } from "./services/logger.service";
 import { getHelmetConfig } from "./config/helmet";
 import { TokenCleanupService } from "./services/token-cleanup.service";
+import { handleError } from "./utils/error-handler";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
 	const server = Fastify({
 		logger: false,
 	}).withTypeProvider<TypeBoxTypeProvider>();
+
+	server.setSchemaErrorFormatter(function (errors, _dataVar) {
+		const err = new Error(errors.map((e) => e.message).join(", "));
+		Object.assign(err, {
+			success: false,
+			error: "VALIDATION_ERROR",
+			message: errors.map((e) => e.message).join(", "),
+			code: 400,
+		});
+		return err;
+	});
 
 	try {
 		if (CONFIG.ENABLE_SECURITY_HEADERS) {
@@ -93,6 +105,22 @@ export async function buildServer(): Promise<FastifyInstance> {
 				done();
 			});
 		}
+
+		server.setErrorHandler(function (error, _request, reply) {
+			// Handle validation errors from TypeBox/Fastify validation
+			if (error.validation) {
+				return reply.status(400).send({
+					success: false,
+					error: "VALIDATION_ERROR",
+					message: error.message,
+					code: 400,
+				});
+			}
+
+			// Handle other errors
+			const formattedError = handleError(error);
+			return reply.status(formattedError.code).send(formattedError);
+		});
 
 		// Root route
 		server.get("/", async () => {

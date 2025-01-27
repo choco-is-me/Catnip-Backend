@@ -4,7 +4,8 @@ import { FastifyRequest } from "fastify";
 import { sign, verify } from "jsonwebtoken";
 import mongoose from "mongoose";
 import { CONFIG } from "../config";
-import { InvalidatedToken, TokenFamily, IDeviceInfo } from "../models/Token";
+import { IDeviceInfo, InvalidatedToken, TokenFamily } from "../models/Token";
+import { withTransaction } from "../utils/transaction.utils";
 import { Logger } from "./logger.service";
 
 interface TokenPayload {
@@ -250,14 +251,10 @@ class JWTService {
 		familyId?: string,
 		isLogout: boolean = false
 	): Promise<void> {
-		const session = await mongoose.startSession();
-		session.startTransaction();
-
-		try {
+		return withTransaction(async (session) => {
 			const invalidationPeriod = this.getInvalidationPeriod(tokenType);
 			const expiryTime = new Date(Date.now() + invalidationPeriod);
 
-			// Create invalidated token with dynamic expiry
 			await InvalidatedToken.create(
 				[
 					{
@@ -270,20 +267,12 @@ class JWTService {
 				{ session }
 			);
 
-			// If it's a refresh token and not a logout, check family
 			if (tokenType === "refresh" && !isLogout && familyId) {
 				await this.checkAndCleanupFamily(familyId, session);
 			}
 
-			await session.commitTransaction();
 			Logger.debug(`Token invalidated: ${jti}`, "JWTService");
-		} catch (error) {
-			await session.abortTransaction();
-			Logger.error(error as Error, "JWTService");
-			throw new Error("TOKEN_INVALIDATION_FAILED");
-		} finally {
-			session.endSession();
-		}
+		}, "JWTService");
 	}
 
 	private static async isTokenInvalidated(jti: string): Promise<boolean> {
@@ -299,10 +288,7 @@ class JWTService {
 		token: string,
 		isRefresh = false
 	): Promise<TokenPayload & { jti: string }> {
-		const session = await mongoose.startSession();
-		session.startTransaction();
-
-		try {
+		return withTransaction(async (session) => {
 			if (!CONFIG.JWT_SECRET || !CONFIG.JWT_REFRESH_SECRET) {
 				throw new Error("JWT_SECRETS_NOT_CONFIGURED");
 			}
@@ -310,7 +296,6 @@ class JWTService {
 			const secret = isRefresh
 				? CONFIG.JWT_REFRESH_SECRET
 				: CONFIG.JWT_SECRET;
-
 			const decoded = verify(token, secret, {
 				algorithms: ["HS256"],
 				issuer: this.JWT_OPTIONS.issuer,
@@ -320,7 +305,6 @@ class JWTService {
 
 			const payload = decoded.payload as TokenPayload & { jti: string };
 
-			// Basic validation
 			if (!payload.sub || payload.sub !== payload.userId) {
 				throw new Error("INVALID_TOKEN_SUBJECT");
 			}
@@ -340,7 +324,6 @@ class JWTService {
 				const family = await TokenFamily.findOne({
 					familyId: payload.familyId,
 				}).session(session);
-
 				if (!family) throw new Error("INVALID_TOKEN_FAMILY");
 				if (family.reuseDetected)
 					throw new Error("TOKEN_FAMILY_COMPROMISED");
@@ -350,17 +333,8 @@ class JWTService {
 				await this.validateTokenFamily(family);
 			}
 
-			await session.commitTransaction();
 			return payload;
-		} catch (error) {
-			await session.abortTransaction();
-			if ((error as Error).name === "TokenExpiredError") {
-				throw new Error("TOKEN_EXPIRED");
-			}
-			throw error;
-		} finally {
-			session.endSession();
-		}
+		}, "JWTService");
 	}
 
 	private static async checkAndCleanupFamily(
@@ -480,10 +454,7 @@ class JWTService {
 		refreshToken: string,
 		request: FastifyRequest
 	): Promise<TokenPair> {
-		const session = await mongoose.startSession();
-		session.startTransaction();
-
-		try {
+		return withTransaction(async (session) => {
 			const decoded = await this.verifyToken(refreshToken, true);
 
 			const family = await TokenFamily.findOneAndUpdate(
@@ -499,7 +470,6 @@ class JWTService {
 				throw new Error("INVALID_TOKEN_FAMILY");
 			}
 
-			// Validate fingerprint
 			if (
 				!(await this.validateFingerprint(family.fingerprint, request))
 			) {
@@ -510,27 +480,13 @@ class JWTService {
 				throw new Error("TOKEN_FINGERPRINT_MISMATCH");
 			}
 
-			// Invalidate old refresh token
 			await this.invalidateToken(
 				decoded.jti,
 				"refresh",
 				decoded.familyId
 			);
-
-			// Generate new tokens
-			const newTokens = await this.generateTokens(
-				decoded.userId,
-				request
-			);
-
-			await session.commitTransaction();
-			return newTokens;
-		} catch (error) {
-			await session.abortTransaction();
-			throw error;
-		} finally {
-			session.endSession();
-		}
+			return this.generateTokens(decoded.userId, request);
+		}, "JWTService");
 	}
 }
 

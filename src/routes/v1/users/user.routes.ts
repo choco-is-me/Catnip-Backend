@@ -10,10 +10,10 @@ import {
 	UpdateUserBody,
 	UserResponseSchema,
 } from "../../../schemas";
-import { ProfileHandler } from "./handlers/profile.handler";
+import { UserHandler } from "./handlers/user.handler";
 
-export default async function profileRoutes(fastify: FastifyInstance) {
-	const handler = new ProfileHandler();
+export default async function userRoutes(fastify: FastifyInstance) {
+	const handler = new UserHandler();
 
 	fastify.get<{ Params: Static<typeof ParamsWithUserId> }>(
 		"/:userId",
