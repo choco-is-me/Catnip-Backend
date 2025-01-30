@@ -43,6 +43,8 @@ export const ErrorTypes = {
 	DUPLICATE_ERROR: "Duplicate Error",
 	RESOURCE_CONFLICT: "Resource Conflict",
 	RESOURCE_EXPIRED: "Resource Expired",
+	ITEM_NOT_FOUND: "Item Not Found",
+	SUPPLIER_NOT_FOUND: "Supplier Not Found",
 
 	// Rate Limiting Errors
 	RATE_LIMIT_ERROR: "Rate Limit Exceeded",
@@ -177,16 +179,32 @@ export const CommonErrors = {
 				: "Insufficient permissions to perform this action"
 		),
 
-	// Resource errors
+	insufficientRole: (requiredRole: string) =>
+		createError(
+			403,
+			ErrorTypes.FORBIDDEN,
+			`This operation requires ${requiredRole} role`
+		),
+
+	// Card errors
 	cardNotFound: () =>
 		createError(404, ErrorTypes.NOT_FOUND, "Card not found"),
 
+	// Resource errors
 	resourceConflict: (resource: string) =>
 		createError(
 			409,
 			ErrorTypes.RESOURCE_CONFLICT,
 			`${resource} already exists or conflicts with existing resource`
 		),
+
+	// Item errors
+	itemNotFound: () =>
+		createError(404, ErrorTypes.ITEM_NOT_FOUND, "Item not found"),
+
+	// Supplier errors
+	supplierNotFound: () =>
+		createError(404, ErrorTypes.SUPPLIER_NOT_FOUND, "Supplier not found"),
 
 	// Rate limiting errors
 	rateLimitExceeded: (timeWindow: string) =>

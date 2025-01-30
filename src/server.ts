@@ -15,6 +15,7 @@ import { Logger } from "./services/logger.service";
 import { getHelmetConfig } from "./config/helmet";
 import { TokenCleanupService } from "./services/token-cleanup.service";
 import { handleError } from "./utils/error-handler";
+import rbacPlugin from "./middlewares/rbac";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
@@ -55,6 +56,7 @@ export async function buildServer(): Promise<FastifyInstance> {
 		// Register middleware
 		await server.register(checkOwnershipPlugin);
 		await server.register(authPlugin);
+		await server.register(rbacPlugin);
 
 		// Register API documentation
 		await server.register(fastifySwagger, swaggerOptions);

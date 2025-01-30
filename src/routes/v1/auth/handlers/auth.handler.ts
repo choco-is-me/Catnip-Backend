@@ -3,7 +3,7 @@ import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import { CONFIG } from "../../../../config";
 import { TokenFamily } from "../../../../models/Token";
-import { User } from "../../../../models/User";
+import { User, UserRole } from "../../../../models/User";
 import { CreateUserBody, LoginRequestBody } from "../../../../schemas";
 import JWTService from "../../../../services/jwt.service";
 import { Logger } from "../../../../services/logger.service";
@@ -21,7 +21,7 @@ export class AuthHandler {
 	private static async validateLoginCredentials(
 		email: string,
 		password: string
-	) {
+	): Promise<{ user: any; role: UserRole } | null> {
 		try {
 			Logger.debug(
 				`Attempting to validate credentials for email: ${email}`,
@@ -42,7 +42,7 @@ export class AuthHandler {
 				`Credentials validated successfully for user: ${user._id}`,
 				"Auth"
 			);
-			return user;
+			return { user, role: user.role };
 		} catch (error) {
 			Logger.error(error as Error, "Auth");
 			throw CommonErrors.databaseError("credential validation");
@@ -104,6 +104,7 @@ export class AuthHandler {
 				firstName: user.firstName,
 				lastName: user.lastName,
 				company: user.company,
+				role: user.role, // Include role in response
 				address: user.address,
 				phoneNumber: user.phoneNumber,
 				createdAt: user.createdAt.toISOString(),
@@ -201,13 +202,15 @@ export class AuthHandler {
 			Logger.debug("Processing login request", "Auth");
 			const { email, password } = request.body;
 
-			const user = await AuthHandler.validateLoginCredentials(
+			const validationResult = await AuthHandler.validateLoginCredentials(
 				email,
 				password
 			);
-			if (!user) {
+			if (!validationResult) {
 				return sendError(reply, CommonErrors.invalidCredentials());
 			}
+
+			const { user, role } = validationResult;
 
 			const existingSessions =
 				await TokenFamily.findActiveSessionsByUserId(
@@ -222,6 +225,7 @@ export class AuthHandler {
 
 			const tokens = await JWTService.generateTokens(
 				user._id.toString(),
+				role, // Pass role to token generation
 				request
 			);
 			AuthHandler.setRefreshTokenCookie(reply, tokens.refreshToken);
@@ -259,9 +263,11 @@ export class AuthHandler {
 				return sendError(reply, CommonErrors.emailExists());
 			}
 
+			// Force role to be 'user' for all registrations
 			const user = new User({
 				...request.body,
 				email: request.body.email.toLowerCase(),
+				role: "user", // Always set role to 'user' for new registrations
 			});
 
 			await user.save({ session });

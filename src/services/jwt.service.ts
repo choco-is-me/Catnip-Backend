@@ -11,6 +11,7 @@ import { Logger } from "./logger.service";
 interface TokenPayload {
 	userId: string;
 	type: "access" | "refresh";
+	role: "user" | "admin";
 	iat?: number;
 	jti: string;
 	sub?: string;
@@ -386,6 +387,7 @@ class JWTService {
 
 	static async generateTokens(
 		userId: string,
+		role: "user" | "admin",
 		request: FastifyRequest
 	): Promise<TokenPair> {
 		try {
@@ -400,11 +402,10 @@ class JWTService {
 			const fingerprint = this.generateFingerprint(request);
 			const fingerprintHash = this.hashFingerprint(fingerprint);
 
-			// Fixed: Pass all required arguments
 			const familyId = await this.createTokenFamily(
 				fingerprintHash,
-				userId, // Add userId argument
-				request // Add request argument
+				userId,
+				request
 			);
 
 			Logger.debug(`Generating tokens for user: ${userId}`, "JWTService");
@@ -413,6 +414,7 @@ class JWTService {
 				{
 					userId,
 					type: "access",
+					role,
 					iat: now,
 					familyId,
 				},
@@ -430,6 +432,7 @@ class JWTService {
 				{
 					userId,
 					type: "refresh",
+					role,
 					iat: now,
 					familyId,
 				},
@@ -485,7 +488,7 @@ class JWTService {
 				"refresh",
 				decoded.familyId
 			);
-			return this.generateTokens(decoded.userId, request);
+			return this.generateTokens(decoded.userId, decoded.role, request);
 		}, "JWTService");
 	}
 }

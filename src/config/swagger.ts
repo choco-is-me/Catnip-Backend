@@ -1,3 +1,4 @@
+// src/config/swagger.ts
 import { SwaggerOptions } from "@fastify/swagger";
 import { FastifySwaggerUiOptions } from "@fastify/swagger-ui";
 import { CONFIG } from "./index";
@@ -9,13 +10,36 @@ export const swaggerOptions: SwaggerOptions = {
 			description: `
 ### API Documentation for Catnip Application
 
-This API provides endpoints for user authentication, profile management, and payment card operations.
+This API provides endpoints for user authentication, profile management, payment cards, items, and supplier operations.
 
-### Authentication
+### Authentication and Authorization
 - Uses JWT Bearer token authentication
 - Access tokens expire in 5 minutes
 - Refresh tokens are provided for token renewal
-      `,
+- Role-based access control (RBAC) is implemented
+
+### Role Types
+1. Public (No authentication required)
+   - Authentication endpoints (login, register)
+   - Public item viewing endpoints
+
+2. User Role
+   - Profile management
+   - Payment card management
+   - Can only access their own resources
+
+3. Admin Role
+   - Full access to all endpoints
+   - Item management (create, update, delete)
+   - Supplier management
+   - Access to all user resources
+
+### Access Control Notes
+- Users can only access their own profile and cards
+- Admin has access to all resources
+- Public endpoints don't require authentication
+- Invalid role access attempts will return a 403 Forbidden error
+`,
 			version: "1.0.0",
 			contact: {
 				name: "API Support",
@@ -43,23 +67,28 @@ This API provides endpoints for user authentication, profile management, and pay
 				url: "https://api.catnip.com",
 				description: "Production Server",
 			},
-			{
-				url: "https://staging.catnip.com",
-				description: "Staging Server",
-			},
 		],
 		tags: [
 			{
 				name: "Auth",
-				description: "Authentication operations",
+				description: "Authentication operations (Public Access)",
 				externalDocs: {
 					url: "https://api.catnip.com/docs/auth",
 					description: "Auth Documentation",
 				},
 			},
 			{
+				name: "Public Items",
+				description:
+					"Public item viewing operations (No authentication required)",
+				externalDocs: {
+					url: "https://api.catnip.com/docs/public-items",
+					description: "Public Items Documentation",
+				},
+			},
+			{
 				name: "Users",
-				description: "User profile management",
+				description: "User profile management (User & Admin Access)",
 				externalDocs: {
 					url: "https://api.catnip.com/docs/users",
 					description: "Users Documentation",
@@ -67,10 +96,26 @@ This API provides endpoints for user authentication, profile management, and pay
 			},
 			{
 				name: "Cards",
-				description: "Payment card operations",
+				description: "Payment card operations (User & Admin Access)",
 				externalDocs: {
 					url: "https://api.catnip.com/docs/cards",
 					description: "Cards Documentation",
+				},
+			},
+			{
+				name: "Items",
+				description: "Item management operations (Admin Only)",
+				externalDocs: {
+					url: "https://api.catnip.com/docs/items",
+					description: "Items Documentation",
+				},
+			},
+			{
+				name: "Suppliers",
+				description: "Supplier management operations (Admin Only)",
+				externalDocs: {
+					url: "https://api.catnip.com/docs/suppliers",
+					description: "Suppliers Documentation",
 				},
 			},
 		],
@@ -82,30 +127,6 @@ This API provides endpoints for user authentication, profile management, and pay
 					bearerFormat: "JWT",
 					description:
 						"JWT token for authentication. Prefix with 'Bearer '",
-				},
-				apiKey: {
-					type: "apiKey",
-					name: "x-api-key",
-					in: "header",
-					description:
-						"API key for service-to-service authentication",
-				},
-				OAuth2: {
-					type: "oauth2",
-					flows: {
-						authorizationCode: {
-							authorizationUrl:
-								"https://auth.catnip.com/oauth/authorize",
-							tokenUrl: "https://auth.catnip.com/oauth/token",
-							refreshUrl: "https://auth.catnip.com/oauth/refresh",
-							scopes: {
-								"user:read": "Read user profile",
-								"user:write": "Update user profile",
-								"cards:read": "View payment cards",
-								"cards:write": "Manage payment cards",
-							},
-						},
-					},
 				},
 			},
 			responses: {
@@ -129,6 +150,32 @@ This API provides endpoints for user authentication, profile management, and pay
 										example: "Invalid or expired token",
 									},
 									code: { type: "integer", example: 401 },
+								},
+							},
+						},
+					},
+				},
+				ForbiddenError: {
+					description: "Permission denied",
+					content: {
+						"application/json": {
+							schema: {
+								type: "object",
+								properties: {
+									success: {
+										type: "boolean",
+										example: false,
+									},
+									error: {
+										type: "string",
+										example: "FORBIDDEN",
+									},
+									message: {
+										type: "string",
+										example:
+											"Insufficient permissions for this operation",
+									},
+									code: { type: "integer", example: 403 },
 								},
 							},
 						},
@@ -162,7 +209,7 @@ This API provides endpoints for user authentication, profile management, and pay
 				},
 			},
 		},
-		security: [{ bearerAuth: [] }],
+		security: [{ bearerAuth: [] }], // Default security requirement
 	},
 };
 

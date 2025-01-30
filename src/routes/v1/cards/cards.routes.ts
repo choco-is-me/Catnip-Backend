@@ -23,7 +23,6 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 	}>(
 		"/:userId/cards",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Cards"],
 				description: "Add a new card to user account",
@@ -52,7 +51,6 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 	}>(
 		"/:userId/cards",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Cards"],
 				description: "Get all cards associated with a user",
@@ -80,7 +78,6 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 	}>(
 		"/:userId/cards/:cardId",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Cards"],
 				description: "Delete a specific card from user account",

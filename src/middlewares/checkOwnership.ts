@@ -37,9 +37,10 @@ export default fp(async (fastify) => {
 			const requestedUserId = (request.params as { userId?: string })
 				.userId;
 			const authenticatedUserId = request.user?.userId;
+			const userRole = request.user?.role;
 
 			Logger.debug(
-				`Checking ownership - Requested: ${requestedUserId}, Authenticated: ${authenticatedUserId}`,
+				`Checking ownership - Requested: ${requestedUserId}, Authenticated: ${authenticatedUserId}, Role: ${userRole}`,
 				"CheckOwnership"
 			);
 
@@ -51,6 +52,16 @@ export default fp(async (fastify) => {
 				return sendError(reply, CommonErrors.forbidden());
 			}
 
+			// Allow admins to access any user's data
+			if (userRole === "admin") {
+				Logger.debug(
+					`Admin access granted for user ${authenticatedUserId} to resource ${requestedUserId}`,
+					"CheckOwnership"
+				);
+				return true;
+			}
+
+			// For regular users, check if they're accessing their own data
 			if (requestedUserId !== authenticatedUserId) {
 				Logger.warn(
 					`Unauthorized access attempt - User ${authenticatedUserId} attempted to access resources of ${requestedUserId}`,

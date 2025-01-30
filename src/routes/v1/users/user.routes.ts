@@ -18,7 +18,6 @@ export default async function userRoutes(fastify: FastifyInstance) {
 	fastify.get<{ Params: Static<typeof ParamsWithUserId> }>(
 		"/:userId",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Users"],
 				description: "Get user profile by ID",
@@ -43,7 +42,6 @@ export default async function userRoutes(fastify: FastifyInstance) {
 	}>(
 		"/:userId",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Users"],
 				description: "Update user profile",
@@ -66,7 +64,6 @@ export default async function userRoutes(fastify: FastifyInstance) {
 	fastify.delete<{ Params: Static<typeof ParamsWithUserId> }>(
 		"/:userId",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Users"],
 				description: "Delete user account",
@@ -91,7 +88,6 @@ export default async function userRoutes(fastify: FastifyInstance) {
 	}>(
 		"/:userId/password",
 		{
-			onRequest: [fastify.authenticate],
 			schema: {
 				tags: ["Users"],
 				description:

@@ -2,6 +2,15 @@
 import { Type } from "@sinclair/typebox";
 import { AddressSchema, ResponseWrapper, Timestamps } from "../common";
 
+// Define Role enum
+export const UserRoleEnum = Type.Union(
+	[Type.Literal("user"), Type.Literal("admin")],
+	{
+		description: "User role type",
+		examples: ["user"],
+	}
+);
+
 // Base user fields without sensitive data
 const UserBaseSchema = Type.Object({
 	email: Type.String({
@@ -25,6 +34,7 @@ const UserBaseSchema = Type.Object({
 			examples: ["Acme Corp"],
 		})
 	),
+	role: UserRoleEnum, // Add role to base schema
 	address: AddressSchema,
 	phoneNumber: Type.String({
 		pattern: "^[+]?[(]?[0-9]{3}[)]?[-s.]?[0-9]{3}[-s.]?[0-9]{4,6}$",
@@ -55,7 +65,7 @@ export const ParamsWithUserId = Type.Object({
 
 // Request body schemas
 export const CreateUserBody = Type.Intersect([
-	UserBaseSchema,
+	Type.Omit(UserBaseSchema, ["role"]), // Remove role from registration - it's always 'user'
 	Type.Object({
 		password: Type.String({
 			minLength: 8,
@@ -77,13 +87,42 @@ export const ChangePasswordBody = Type.Object({
 	}),
 });
 
-export const UpdateUserBody = Type.Partial(UserBaseSchema);
+// For updates, allow updating everything except role and email
+export const UpdateUserBody = Type.Partial(
+	Type.Omit(UserBaseSchema, ["role", "email"])
+);
 
-// Response schemas
+// Response schemas with examples
+const userExample = {
+	_id: "507f1f77bcf86cd799439011",
+	email: "john.doe@example.com",
+	firstName: "John",
+	lastName: "Doe",
+	role: "user",
+	address: {
+		street: "123 Main St",
+		city: "New York",
+		province: "NY",
+		zipCode: "10001",
+	},
+	phoneNumber: "+1234567890",
+	createdAt: "2023-01-01T00:00:00.000Z",
+	updatedAt: "2023-01-01T00:00:00.000Z",
+};
+
 export const UserResponseSchema = ResponseWrapper(
 	Type.Object({
 		user: UserSchema,
-	})
+	}),
+	{
+		description: "User profile response",
+		examples: [
+			{
+				success: true,
+				data: { user: userExample },
+			},
+		],
+	}
 );
 
 export const UsersResponseSchema = ResponseWrapper(
@@ -92,7 +131,21 @@ export const UsersResponseSchema = ResponseWrapper(
 		total: Type.Integer(),
 		page: Type.Integer(),
 		totalPages: Type.Integer(),
-	})
+	}),
+	{
+		description: "Users list response",
+		examples: [
+			{
+				success: true,
+				data: {
+					users: [userExample],
+					total: 1,
+					page: 1,
+					totalPages: 1,
+				},
+			},
+		],
+	}
 );
 
 export const DeleteResponseSchema = ResponseWrapper(

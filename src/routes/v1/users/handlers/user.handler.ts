@@ -92,21 +92,7 @@ export class UserHandler {
 				throw createBusinessError("No fields provided for update");
 			}
 
-			if (request.body.email) {
-				const existingUser = await User.findOne({
-					email: request.body.email,
-					_id: { $ne: userId },
-				}).session(session);
-
-				if (existingUser) {
-					throw createError(
-						409,
-						ErrorTypes.DUPLICATE_ERROR,
-						"Email already exists"
-					);
-				}
-			}
-
+			// Remove email check since email updates are not allowed
 			const updatedUser = await User.findByIdAndUpdate(
 				userId,
 				{ $set: request.body },
