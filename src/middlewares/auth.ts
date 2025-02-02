@@ -2,21 +2,12 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { JwtPayload } from "jsonwebtoken";
+import { UserRole } from "../models/User";
 import JWTService from "../services/jwt.service";
 import { Logger } from "../services/logger.service";
 import { CommonErrors, sendError } from "../utils/error-handler";
 
-declare module "fastify" {
-	interface FastifyInstance {
-		authenticate: (
-			request: FastifyRequest,
-			reply: FastifyReply
-		) => Promise<void>;
-	}
-	interface FastifyRequest {
-		user?: JwtPayload & { userId: string; jti: string };
-	}
-}
+// Remove the declare module section since it's now in fastify.d.ts
 
 export default fp(async (fastify) => {
 	fastify.decorate(
@@ -55,13 +46,16 @@ export default fp(async (fastify) => {
 						);
 					}
 
-					request.user = decoded as JwtPayload & {
-						userId: string;
-						jti: string;
+					// Ensure all required properties are attached to request.user
+					request.user = {
+						...decoded,
+						userId: decoded.userId,
+						jti: decoded.jti,
+						role: decoded.role as UserRole,
 					};
 
 					Logger.debug(
-						`User ${decoded.userId} authenticated successfully`,
+						`User ${decoded.userId} authenticated successfully with role ${decoded.role}`,
 						"Auth"
 					);
 				} catch (error) {

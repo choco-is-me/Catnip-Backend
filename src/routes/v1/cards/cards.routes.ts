@@ -36,12 +36,16 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.addCard(request, reply);
-		}
+		handler.addCard
 	);
 
 	// Get user's cards route
@@ -64,12 +68,16 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.getCards(request, reply);
-		}
+		handler.getCards
 	);
 
 	// Delete card route
@@ -94,11 +102,15 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.deleteCard(request, reply);
-		}
+		handler.deleteCard
 	);
 }

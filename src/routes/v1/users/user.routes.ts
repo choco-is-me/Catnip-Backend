@@ -1,4 +1,4 @@
-// src/routes/v1/users/profile.routes.ts
+// src/routes/v1/users/user.routes.ts
 import { Static } from "@sinclair/typebox";
 import { FastifyInstance } from "fastify";
 import {
@@ -15,6 +15,7 @@ import { UserHandler } from "./handlers/user.handler";
 export default async function userRoutes(fastify: FastifyInstance) {
 	const handler = new UserHandler();
 
+	// Get user profile
 	fastify.get<{ Params: Static<typeof ParamsWithUserId> }>(
 		"/:userId",
 		{
@@ -28,14 +29,19 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.getProfile(request, reply);
-		}
+		handler.getProfile
 	);
 
+	// Update profile
 	fastify.put<{
 		Params: Static<typeof ParamsWithUserId>;
 		Body: Static<typeof UpdateUserBody>;
@@ -53,14 +59,19 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.updateProfile(request, reply);
-		}
+		handler.updateProfile
 	);
 
+	// Delete profile
 	fastify.delete<{ Params: Static<typeof ParamsWithUserId> }>(
 		"/:userId",
 		{
@@ -74,14 +85,19 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.deleteProfile(request, reply);
-		}
+		handler.deleteProfile
 	);
 
+	// Change password
 	fastify.put<{
 		Params: Static<typeof ParamsWithUserId>;
 		Body: Static<typeof ChangePasswordBody>;
@@ -102,11 +118,15 @@ export default async function userRoutes(fastify: FastifyInstance) {
 					500: ErrorResponseSchema,
 				},
 			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
 		},
-		async (request, reply) => {
-			const hasPermission = await fastify.checkOwnership(request, reply);
-			if (!hasPermission) return;
-			return handler.changePassword(request, reply);
-		}
+		handler.changePassword
 	);
 }

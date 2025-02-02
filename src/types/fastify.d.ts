@@ -28,7 +28,7 @@ declare module "fastify" {
 		user?: JwtPayload & {
 			userId: string;
 			jti: string;
+			role: UserRole;
 		};
-		role?: UserRole;
 	}
 }

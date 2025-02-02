@@ -10,6 +10,8 @@ export class TokenCleanupService {
 	private readonly METRICS_INTERVAL = 24 * 60 * 60 * 1000; // Daily metrics
 	private metricsInterval: NodeJS.Timeout | null = null;
 	private isRunning = false;
+	private readonly MAX_RETRIES = 3;
+	private readonly RETRY_DELAY = 1000; // 1 second
 
 	private constructor() {
 		// Private constructor to enforce singleton
@@ -20,6 +22,35 @@ export class TokenCleanupService {
 			TokenCleanupService.instance = new TokenCleanupService();
 		}
 		return TokenCleanupService.instance;
+	}
+
+	private async retryOperation<T>(
+		operation: () => Promise<T>,
+		retries = this.MAX_RETRIES
+	): Promise<T> {
+		try {
+			return await operation();
+		} catch (error) {
+			if (retries > 0 && this.isRetryableError(error)) {
+				Logger.warn(
+					`Retrying operation. Attempts remaining: ${retries}`,
+					"TokenCleanup"
+				);
+				await new Promise((resolve) =>
+					setTimeout(resolve, this.RETRY_DELAY)
+				);
+				return this.retryOperation(operation, retries - 1);
+			}
+			throw error;
+		}
+	}
+
+	private isRetryableError(error: any): boolean {
+		return (
+			error instanceof mongoose.Error ||
+			error.name === "MongoError" ||
+			error.message.includes("please retry the operation")
+		);
 	}
 
 	async start(): Promise<void> {
@@ -72,37 +103,32 @@ export class TokenCleanupService {
 	}
 
 	private async cleanup(): Promise<void> {
-		const session = await mongoose.startSession();
-		session.startTransaction();
-
 		const startTime = Date.now();
 		Logger.debug("Starting cleanup operation", "TokenCleanup");
 
 		try {
 			// Clean expired invalidated tokens
-			const expiredTokensResult = await InvalidatedToken.deleteMany({
-				expiryTime: { $lt: new Date() },
-			}).session(session);
+			const expiredTokensResult = await this.retryOperation(() =>
+				InvalidatedToken.deleteMany({
+					expiryTime: { $lt: new Date() },
+				})
+			);
 
 			// Clean expired token families
-			const expiredFamiliesResult = await TokenFamily.deleteMany({
-				validUntil: { $lt: new Date() },
-			}).session(session);
+			const expiredFamiliesResult = await this.retryOperation(() =>
+				TokenFamily.deleteMany({
+					validUntil: { $lt: new Date() },
+				})
+			);
 
 			// Clean compromised token families
-			const compromisedResult = await this.cleanupCompromisedSessions(
-				session
-			);
+			const compromisedResult = await this.cleanupCompromisedSessions();
 
-			// Clean orphaned tokens (where family no longer exists)
-			const orphanedResult = await this.cleanupOrphanedTokens(session);
+			// Clean orphaned tokens
+			const orphanedResult = await this.cleanupOrphanedTokens();
 
-			// Clean inactive families (no activity in 30 days)
-			const inactiveFamiliesResult = await this.cleanupInactiveFamilies(
-				session
-			);
-
-			await session.commitTransaction();
+			// Clean inactive families
+			const inactiveFamiliesResult = await this.cleanupInactiveFamilies();
 
 			const duration = Date.now() - startTime;
 			Logger.info(
@@ -115,44 +141,41 @@ export class TokenCleanupService {
 				"TokenCleanup"
 			);
 		} catch (error) {
-			await session.abortTransaction();
 			Logger.error(error as Error, "TokenCleanup");
 			throw error;
-		} finally {
-			session.endSession();
 		}
 	}
 
-	private async cleanupCompromisedSessions(
-		session: mongoose.ClientSession
-	): Promise<number> {
+	private async cleanupCompromisedSessions(): Promise<number> {
 		try {
-			// Find all compromised families
-			const compromisedFamilies = await TokenFamily.find({
-				reuseDetected: true,
-			}).session(session);
+			const compromisedFamilies = await this.retryOperation(() =>
+				TokenFamily.find({
+					reuseDetected: true,
+				})
+			);
 
-			// Invalidate all related tokens
 			for (const family of compromisedFamilies) {
-				await InvalidatedToken.create(
-					[
+				await this.retryOperation(() =>
+					InvalidatedToken.create([
 						{
 							jti: family.familyId,
 							expiryTime: new Date(
 								Date.now() + 7 * 24 * 60 * 60 * 1000
-							), // 7 days
+							),
 							tokenType: "refresh",
 							familyId: family.familyId,
 						},
-					],
-					{ session }
+					])
 				);
 			}
 
-			// Delete compromised families
-			const deleteResult = await TokenFamily.deleteMany({
-				familyId: { $in: compromisedFamilies.map((f) => f.familyId) },
-			}).session(session);
+			const deleteResult = await this.retryOperation(() =>
+				TokenFamily.deleteMany({
+					familyId: {
+						$in: compromisedFamilies.map((f) => f.familyId),
+					},
+				})
+			);
 
 			return deleteResult.deletedCount;
 		} catch (error) {
@@ -161,22 +184,18 @@ export class TokenCleanupService {
 		}
 	}
 
-	private async cleanupOrphanedTokens(
-		session: mongoose.ClientSession
-	): Promise<number> {
+	private async cleanupOrphanedTokens(): Promise<number> {
 		try {
-			// First get all valid family IDs
-			const validFamilyIds = await TokenFamily.distinct(
-				"familyId"
-			).session(session);
+			const validFamilyIds = await TokenFamily.distinct("familyId");
 
-			// Delete tokens where familyId exists but isn't in the valid list
-			const result = await InvalidatedToken.deleteMany({
-				familyId: {
-					$exists: true,
-					$nin: validFamilyIds,
-				},
-			}).session(session);
+			const result = await this.retryOperation(() =>
+				InvalidatedToken.deleteMany({
+					familyId: {
+						$exists: true,
+						$nin: validFamilyIds,
+					},
+				})
+			);
 
 			return result.deletedCount;
 		} catch (error) {
@@ -185,15 +204,15 @@ export class TokenCleanupService {
 		}
 	}
 
-	private async cleanupInactiveFamilies(
-		session: mongoose.ClientSession
-	): Promise<number> {
+	private async cleanupInactiveFamilies(): Promise<number> {
 		const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 		try {
-			const result = await TokenFamily.deleteMany({
-				"deviceInfo.lastActive": { $lt: thirtyDaysAgo },
-				reuseDetected: false,
-			}).session(session);
+			const result = await this.retryOperation(() =>
+				TokenFamily.deleteMany({
+					"deviceInfo.lastActive": { $lt: thirtyDaysAgo },
+					reuseDetected: false,
+				})
+			);
 
 			return result.deletedCount;
 		} catch (error) {
