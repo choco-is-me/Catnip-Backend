@@ -18,23 +18,26 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 	fastify.post("/", {
 		schema: {
 			tags: ["Items"],
-			description: "Create a new item",
+			description: "Create a new item (Admin only)",
 			body: CreateItemBody,
 			response: {
 				201: ItemResponseSchema,
 				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.createItem.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.createItem,
 	});
 
 	// Update item (admin only)
 	fastify.put("/:itemId", {
 		schema: {
 			tags: ["Items"],
-			description: "Update item by ID",
+			description: "Update item by ID (Admin only)",
 			params: Type.Object({
 				itemId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
@@ -42,18 +45,21 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 			response: {
 				200: ItemResponseSchema,
 				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.updateItem.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.updateItem,
 	});
 
 	// Delete item (admin only)
 	fastify.delete("/:itemId", {
 		schema: {
 			tags: ["Items"],
-			description: "Delete item by ID",
+			description: "Delete item by ID (Admin only)",
 			params: Type.Object({
 				itemId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
@@ -64,18 +70,21 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 						message: Type.String(),
 					}),
 				}),
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.deleteItem.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.deleteItem,
 	});
 
 	// Update stock (admin only)
 	fastify.patch("/:itemId/stock", {
 		schema: {
 			tags: ["Items"],
-			description: "Update item stock",
+			description: "Update item stock (Admin only)",
 			params: Type.Object({
 				itemId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
@@ -83,10 +92,13 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 			response: {
 				200: StockUpdateResponseSchema,
 				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.updateStock.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.updateStock,
 	});
 }

@@ -51,7 +51,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 				},
 			},
 		},
-		handler.refreshToken.bind(handler)
+		handler.refreshToken
 	);
 
 	fastify.post<{ Body: Static<typeof LoginRequestBody> }>(

@@ -26,7 +26,7 @@ export default async function publicItemRoutes(fastify: FastifyInstance) {
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.getItem.bind(handler),
+		handler: handler.getItem,
 	});
 
 	// List items with filters (public access)
@@ -41,6 +41,6 @@ export default async function publicItemRoutes(fastify: FastifyInstance) {
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.listItems.bind(handler),
+		handler: handler.listItems,
 	});
 }

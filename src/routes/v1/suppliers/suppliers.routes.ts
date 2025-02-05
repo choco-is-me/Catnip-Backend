@@ -14,43 +14,49 @@ import { SupplierHandler } from "./handlers/suppliers.handler";
 export default async function supplierRoutes(fastify: FastifyInstance) {
 	const handler = new SupplierHandler();
 
-	// Create supplier
+	// Create supplier (admin only)
 	fastify.post("/", {
 		schema: {
 			tags: ["Suppliers"],
-			description: "Create a new supplier",
+			description: "Create a new supplier (Admin only)",
 			body: CreateSupplierBody,
 			response: {
 				201: SupplierResponseSchema,
 				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.createSupplier.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.createSupplier,
 	});
 
-	// Get supplier by ID
+	// Get supplier by ID (admin only)
 	fastify.get("/:supplierId", {
 		schema: {
 			tags: ["Suppliers"],
-			description: "Get supplier by ID",
+			description: "Get supplier by ID (Admin only)",
 			params: Type.Object({
 				supplierId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
 			response: {
 				200: SupplierResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.getSupplier.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.getSupplier,
 	});
 
-	// Update supplier
+	// Update supplier (admin only)
 	fastify.put("/:supplierId", {
 		schema: {
 			tags: ["Suppliers"],
-			description: "Update supplier by ID",
+			description: "Update supplier by ID (Admin only)",
 			params: Type.Object({
 				supplierId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
@@ -58,18 +64,21 @@ export default async function supplierRoutes(fastify: FastifyInstance) {
 			response: {
 				200: SupplierResponseSchema,
 				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.updateSupplier.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.updateSupplier,
 	});
 
-	// Delete supplier
+	// Delete supplier (admin only)
 	fastify.delete("/:supplierId", {
 		schema: {
 			tags: ["Suppliers"],
-			description: "Delete supplier by ID",
+			description: "Delete supplier by ID (Admin only)",
 			params: Type.Object({
 				supplierId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
@@ -81,33 +90,40 @@ export default async function supplierRoutes(fastify: FastifyInstance) {
 						supplier: Type.Optional(Type.Object({})),
 					}),
 				}),
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.deleteSupplier.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.deleteSupplier,
 	});
 
-	// List suppliers
+	// List suppliers (admin only)
 	fastify.get("/", {
 		schema: {
 			tags: ["Suppliers"],
-			description: "List suppliers with filters and pagination",
+			description:
+				"List suppliers with filters and pagination (Admin only)",
 			querystring: SupplierQueryParams,
 			response: {
 				200: SuppliersResponseSchema,
 				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.listSuppliers.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.listSuppliers,
 	});
 
-	// Get supplier statistics
+	// Get supplier statistics (admin only)
 	fastify.get("/:supplierId/stats", {
 		schema: {
 			tags: ["Suppliers"],
-			description: "Get supplier statistics",
+			description: "Get supplier statistics (Admin only)",
 			params: Type.Object({
 				supplierId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
@@ -124,10 +140,13 @@ export default async function supplierRoutes(fastify: FastifyInstance) {
 						]),
 					}),
 				}),
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
-		handler: handler.getSupplierStats.bind(handler),
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.getSupplierStats,
 	});
 }
