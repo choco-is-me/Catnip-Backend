@@ -24,13 +24,39 @@ export async function buildServer(): Promise<FastifyInstance> {
 	}).withTypeProvider<TypeBoxTypeProvider>();
 
 	server.setSchemaErrorFormatter(function (errors, _dataVar) {
-		const err = new Error(errors.map((e) => e.message).join(", "));
+		// Create more user-friendly messages based on error types
+		const errorMessage =
+			errors.map((error) => {
+				if (
+					error.keyword === "pattern" &&
+					error.params?.field === "userId"
+				) {
+					return "Invalid user ID format";
+				}
+				if (
+					error.keyword === "type" &&
+					error.params?.field === "userId"
+				) {
+					return "User ID must be a string";
+				}
+				if (
+					error.keyword === "required" &&
+					error.params?.missingProperty === "userId"
+				) {
+					return "User ID is required";
+				}
+				// Default to the original message if no specific mapping
+				return error.message;
+			})[0] || "Validation error";
+
+		const err = new Error(errorMessage);
 		Object.assign(err, {
 			success: false,
-			error: "VALIDATION_ERROR",
-			message: errors.map((e) => e.message).join(", "),
+			error: "INVALID_FORMAT",
+			message: errorMessage,
 			code: 400,
 		});
+
 		return err;
 	});
 
