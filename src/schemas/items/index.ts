@@ -1,3 +1,4 @@
+// src/schemas/items/index.ts
 import { Type } from "@sinclair/typebox";
 import { ResponseWrapper, Timestamps } from "../common";
 

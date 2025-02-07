@@ -1,4 +1,4 @@
-// src/schemas/index.ts
+// src/server.ts
 import cookie from "@fastify/cookie";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUi from "@fastify/swagger-ui";
@@ -6,16 +6,16 @@ import { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import Fastify, { FastifyInstance } from "fastify";
 import mongoose from "mongoose";
 import { CONFIG } from "./config";
+import { getHelmetConfig } from "./config/helmet";
 import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
 import authPlugin from "./middlewares/auth";
 import checkOwnershipPlugin from "./middlewares/checkOwnership";
+import rbacPlugin from "./middlewares/rbac";
 import dbPlugin from "./plugins/mongodb";
 import modifierRoutes from "./routes/v1";
 import { Logger } from "./services/logger.service";
-import { getHelmetConfig } from "./config/helmet";
 import { TokenCleanupService } from "./services/token-cleanup.service";
 import { handleError } from "./utils/error-handler";
-import rbacPlugin from "./middlewares/rbac";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled

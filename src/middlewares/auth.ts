@@ -1,13 +1,10 @@
 // src/middlewares/auth.ts
 import { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
-import { JwtPayload } from "jsonwebtoken";
 import { UserRole } from "../models/User";
 import JWTService from "../services/jwt.service";
 import { Logger } from "../services/logger.service";
 import { CommonErrors, sendError } from "../utils/error-handler";
-
-// Remove the declare module section since it's now in fastify.d.ts
 
 export default fp(async (fastify) => {
 	fastify.decorate(

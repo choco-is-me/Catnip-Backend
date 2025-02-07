@@ -1,8 +1,8 @@
 // src/models/User.ts
 import bcrypt from "bcrypt";
 import mongoose, { CallbackError, Document, Schema, Types } from "mongoose";
-import { Logger } from "../services/logger.service";
 import { CONFIG } from "../config";
+import { Logger } from "../services/logger.service";
 
 export type UserRole = "user" | "admin";
 

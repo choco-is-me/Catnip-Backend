@@ -1,6 +1,6 @@
 // src/routes/v1/suppliers/suppliers.routes.ts
-import { FastifyInstance } from "fastify";
 import { Type } from "@sinclair/typebox";
+import { FastifyInstance } from "fastify";
 import {
 	CreateSupplierBody,
 	ErrorResponseSchema,

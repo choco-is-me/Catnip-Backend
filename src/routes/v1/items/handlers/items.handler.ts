@@ -1,13 +1,12 @@
 // src/routes/v1/items/handlers/item.handler.ts
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
-import { Item, IItem } from "../../../../models/Item";
+import { IItem, Item } from "../../../../models/Item";
 import { Supplier } from "../../../../models/Supplier";
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
 	createBusinessError,
-	ErrorTypes,
 } from "../../../../utils/error-handler";
 import { withTransaction } from "../../../../utils/transaction.utils";
 

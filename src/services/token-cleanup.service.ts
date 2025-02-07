@@ -1,7 +1,7 @@
 // src/services/token-cleanup.service.ts
+import mongoose from "mongoose";
 import { InvalidatedToken, TokenFamily } from "../models/Token";
 import { Logger } from "./logger.service";
-import mongoose from "mongoose";
 
 export class TokenCleanupService {
 	private static instance: TokenCleanupService;

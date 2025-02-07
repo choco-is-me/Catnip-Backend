@@ -12,7 +12,6 @@ import {
 } from "../../../../schemas";
 import { Logger } from "../../../../services/logger.service";
 import {
-	CommonErrors,
 	createBusinessError,
 	createError,
 	createSecurityError,

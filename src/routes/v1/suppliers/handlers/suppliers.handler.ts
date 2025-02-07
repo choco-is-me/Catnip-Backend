@@ -2,7 +2,7 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
 import { Item } from "../../../../models/Item";
-import { Supplier, ISupplier } from "../../../../models/Supplier";
+import { ISupplier, Supplier } from "../../../../models/Supplier";
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,

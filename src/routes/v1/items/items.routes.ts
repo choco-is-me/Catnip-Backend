@@ -1,6 +1,6 @@
 // src/routes/v1/items/items.routes.ts
-import { FastifyInstance } from "fastify";
 import { Type } from "@sinclair/typebox";
+import { FastifyInstance } from "fastify";
 import {
 	CreateItemBody,
 	ErrorResponseSchema,
