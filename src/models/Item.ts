@@ -194,7 +194,21 @@ const ItemSchema = new Schema<IItem>(
 );
 
 // Indexes for efficient querying
-ItemSchema.index({ name: "text", description: "text" });
+ItemSchema.index(
+	{
+		name: "text",
+		description: "text",
+		tags: "text",
+	},
+	{
+		weights: {
+			name: 10, // Name matches are most important
+			tags: 5, // Tags are second priority
+			description: 1, // Description matches are lowest priority
+		},
+		name: "items_text_index",
+	}
+);
 ItemSchema.index({ "variants.sku": 1 });
 ItemSchema.index({ "ratings.average": -1 });
 ItemSchema.index({ numberOfSales: -1 });

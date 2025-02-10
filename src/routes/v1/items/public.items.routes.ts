@@ -4,8 +4,8 @@ import { FastifyInstance } from "fastify";
 import {
 	ErrorResponseSchema,
 	ItemQueryParams,
-	ItemResponseSchema,
-	ItemsResponseSchema,
+	PaginatedItemsResponseSchema,
+	SingleItemResponseSchema,
 } from "../../../schemas";
 import { ItemHandler } from "./handlers/items.handler";
 
@@ -21,7 +21,7 @@ export default async function publicItemRoutes(fastify: FastifyInstance) {
 				itemId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
 			}),
 			response: {
-				200: ItemResponseSchema,
+				200: SingleItemResponseSchema,
 				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
@@ -36,7 +36,7 @@ export default async function publicItemRoutes(fastify: FastifyInstance) {
 			description: "List items with filters (Public Access)",
 			querystring: ItemQueryParams,
 			response: {
-				200: ItemsResponseSchema,
+				200: PaginatedItemsResponseSchema,
 				400: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},

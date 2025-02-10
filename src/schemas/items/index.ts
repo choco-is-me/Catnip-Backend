@@ -2,6 +2,9 @@
 import { Type } from "@sinclair/typebox";
 import { ResponseWrapper, Timestamps } from "../common";
 
+// Constants
+const MAX_BULK_ITEMS = 20;
+
 // Base schemas for specifications and variants
 export const ItemSpecificationSchema = Type.Record(
 	Type.String(),
@@ -178,6 +181,52 @@ export const ItemSchema = Type.Intersect(
 	}
 );
 
+// Bulk Creation Schemas
+const BulkItemValidation = Type.Intersect([
+	ItemBaseSchema,
+	Type.Object({
+		variants: Type.Array(VariantSchema, {
+			uniqueItems: true,
+			minItems: 1,
+		}),
+	}),
+]);
+
+export const BulkCreateItemBody = Type.Object({
+	items: Type.Array(BulkItemValidation, {
+		minItems: 1,
+		maxItems: MAX_BULK_ITEMS,
+		description: `Array of items to create (maximum ${MAX_BULK_ITEMS} items)`,
+	}),
+});
+
+export const BulkCreateItemResponse = ResponseWrapper(
+	Type.Object({
+		items: Type.Array(ItemSchema),
+		summary: Type.Object({
+			totalItems: Type.Number(),
+			message: Type.String(),
+		}),
+	}),
+	{
+		description: "Bulk item creation response",
+		examples: [
+			{
+				success: true,
+				data: {
+					items: [
+						/* Example item objects would go here */
+					],
+					summary: {
+						totalItems: 2,
+						message: "Successfully created 2 items",
+					},
+				},
+			},
+		],
+	}
+);
+
 // Request/Response schemas
 export const CreateItemBody = ItemBaseSchema;
 export const UpdateItemBody = Type.Partial(ItemBaseSchema);
@@ -227,13 +276,13 @@ export const ItemQueryParams = Type.Object({
 });
 
 // Response schemas
-export const ItemResponseSchema = ResponseWrapper(
+export const SingleItemResponseSchema = ResponseWrapper(
 	Type.Object({
 		item: ItemSchema,
 	})
 );
 
-export const ItemsResponseSchema = ResponseWrapper(
+export const PaginatedItemsResponseSchema = ResponseWrapper(
 	Type.Object({
 		items: Type.Array(ItemSchema),
 		pagination: Type.Object({

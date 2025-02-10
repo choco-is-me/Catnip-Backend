@@ -2,9 +2,11 @@
 import { Type } from "@sinclair/typebox";
 import { FastifyInstance } from "fastify";
 import {
+	BulkCreateItemBody,
+	BulkCreateItemResponse,
 	CreateItemBody,
 	ErrorResponseSchema,
-	ItemResponseSchema,
+	SingleItemResponseSchema,
 	StockUpdateResponseSchema,
 	UpdateItemBody,
 	UpdateStockBody,
@@ -21,7 +23,7 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 			description: "Create a new item (Admin only)",
 			body: CreateItemBody,
 			response: {
-				201: ItemResponseSchema,
+				201: SingleItemResponseSchema,
 				400: ErrorResponseSchema,
 				401: ErrorResponseSchema,
 				403: ErrorResponseSchema,
@@ -31,6 +33,25 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 		},
 		...fastify.protectedRoute(["admin"]),
 		handler: handler.createItem,
+	});
+
+	// Create multiple items in bulk (admin only)
+	fastify.post("/bulk", {
+		schema: {
+			tags: ["Items"],
+			description: "Create multiple items in bulk (Admin only)",
+			body: BulkCreateItemBody,
+			response: {
+				201: BulkCreateItemResponse,
+				400: ErrorResponseSchema,
+				401: ErrorResponseSchema,
+				403: ErrorResponseSchema,
+				404: ErrorResponseSchema,
+				500: ErrorResponseSchema,
+			},
+		},
+		...fastify.protectedRoute(["admin"]),
+		handler: handler.createItemsBulk,
 	});
 
 	// Update item (admin only)
@@ -43,7 +64,7 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 			}),
 			body: UpdateItemBody,
 			response: {
-				200: ItemResponseSchema,
+				200: SingleItemResponseSchema,
 				400: ErrorResponseSchema,
 				401: ErrorResponseSchema,
 				403: ErrorResponseSchema,
