@@ -57,6 +57,13 @@ export const VariantSchema = Type.Object(
 	}
 );
 
+// Item sort fields
+export type ItemSortField =
+	| "effectivePrice"
+	| "ratings.average"
+	| "numberOfSales"
+	| "createdAt";
+
 // Rating schema
 export const RatingSchema = Type.Object(
 	{
@@ -264,7 +271,7 @@ export const ItemQueryParams = Type.Object({
 	inStock: Type.Optional(Type.Boolean()),
 	sortBy: Type.Optional(
 		Type.Union([
-			Type.Literal("price"),
+			Type.Literal("effectivePrice"),
 			Type.Literal("ratings.average"),
 			Type.Literal("numberOfSales"),
 			Type.Literal("createdAt"),
