@@ -1,17 +1,29 @@
 // src/models/Card.ts
 import crypto from "crypto";
-import mongoose, { Document, Schema } from "mongoose";
+import mongoose, { Document, Model, Schema } from "mongoose";
 import { CONFIG } from "../config";
 import { Logger } from "../services/logger.service";
+
+export type CardNetwork = "visa" | "mastercard";
 
 export interface ICard extends Document {
 	userId: mongoose.Types.ObjectId;
 	cardNumber: string;
 	expirationDate: string;
 	nameOnCard: string;
+	network: CardNetwork;
 	isDefault: boolean;
 	createdAt: Date;
 	updatedAt: Date;
+}
+
+// Define interface for static methods
+interface ICardModel extends Model<ICard> {
+	detectCardNetwork(cardNumber: string): CardNetwork | null;
+	compareCardNumbers(
+		plainCardNumber: string,
+		encryptedCardNumber: string
+	): Promise<boolean>;
 }
 
 interface EncryptedData {
@@ -44,6 +56,12 @@ const CardSchema = new Schema<ICard>(
 			set: (value: string) => encrypt(value),
 			get: (value: string) => decrypt(value),
 		},
+		network: {
+			type: String,
+			required: true,
+			enum: ["visa", "mastercard"],
+			index: true,
+		},
 		isDefault: {
 			type: Boolean,
 			default: false,
@@ -63,6 +81,26 @@ CardSchema.statics.compareCardNumbers = async function (
 ): Promise<boolean> {
 	const decryptedNumber = decrypt(encryptedCardNumber);
 	return decryptedNumber === plainCardNumber;
+};
+
+// Add network detection utility as static method
+CardSchema.statics.detectCardNetwork = function (
+	cardNumber: string
+): CardNetwork | null {
+	// Visa: Starts with 4, length 13 or 16
+	const visaPattern = /^4[0-9]{12}(?:[0-9]{3})?$/;
+
+	// Mastercard: Starts with 51-55 or 2221-2720, length 16
+	const mastercardPattern =
+		/^(5[1-5][0-9]{14}|2(22[1-9][0-9]{12}|2[3-9][0-9]{13}|[3-6][0-9]{14}|7[0-1][0-9]{13}|720[0-9]{12}))$/;
+
+	if (visaPattern.test(cardNumber)) {
+		return "visa";
+	} else if (mastercardPattern.test(cardNumber)) {
+		return "mastercard";
+	}
+
+	return null;
 };
 
 // Encryption functions
@@ -114,11 +152,32 @@ function decrypt(encryptedJson: string): string {
 	}
 }
 
+// Add network detection utility
+CardSchema.statics.detectCardNetwork = function (
+	cardNumber: string
+): CardNetwork | null {
+	// Visa: Starts with 4, length 13 or 16
+	const visaPattern = /^4[0-9]{12}(?:[0-9]{3})?$/;
+
+	// Mastercard: Starts with 51-55 or 2221-2720, length 16
+	const mastercardPattern =
+		/^(5[1-5][0-9]{14}|2(22[1-9][0-9]{12}|2[3-9][0-9]{13}|[3-6][0-9]{14}|7[0-1][0-9]{13}|720[0-9]{12}))$/;
+
+	if (visaPattern.test(cardNumber)) {
+		return "visa";
+	} else if (mastercardPattern.test(cardNumber)) {
+		return "mastercard";
+	}
+
+	return null;
+};
+
 // Indexes
 CardSchema.index({ userId: 1 });
 CardSchema.index({ cardNumber: 1 }, { unique: true });
 
-export const Card = mongoose.model<ICard>("Card", CardSchema);
+// Export the model with proper typing for static methods
+export const Card = mongoose.model<ICard, ICardModel>("Card", CardSchema);
 
 // Log model registration
 Logger.info("Card model registered", "CardModel");

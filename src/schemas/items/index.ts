@@ -203,7 +203,7 @@ export const BulkCreateItemBody = Type.Object({
 	items: Type.Array(BulkItemValidation, {
 		minItems: 1,
 		maxItems: MAX_BULK_ITEMS,
-		description: `Array of items to create (maximum ${MAX_BULK_ITEMS} items)`,
+		description: `Array of items to create (1-${MAX_BULK_ITEMS} items). Use this endpoint for both single and multiple item creation.`,
 	}),
 });
 
@@ -216,17 +216,48 @@ export const BulkCreateItemResponse = ResponseWrapper(
 		}),
 	}),
 	{
-		description: "Bulk item creation response",
+		description:
+			"Bulk item creation response (handles both single and multiple items)",
 		examples: [
 			{
 				success: true,
 				data: {
 					items: [
-						/* Example item objects would go here */
+						{
+							_id: "507f1f77bcf86cd799439011",
+							name: "Premium Cotton T-Shirt",
+							description:
+								"High-quality cotton t-shirt with premium finish",
+							basePrice: 24.99,
+							images: ["https://example.com/images/tshirt-1.jpg"],
+							tags: ["clothing", "t-shirt", "premium"],
+							variants: [
+								{
+									sku: "SHIRT-BLU-XL",
+									specifications: {
+										size: "XL",
+										color: "Blue",
+										material: "Cotton",
+									},
+									price: 29.99,
+									stockQuantity: 100,
+								},
+							],
+							supplier: "507f1f77bcf86cd799439012",
+							ratings: {
+								average: 4.5,
+								count: 120,
+								reviewCount: 50,
+							},
+							numberOfSales: 500,
+							status: "active",
+							createdAt: "2023-01-01T00:00:00.000Z",
+							updatedAt: "2023-01-01T00:00:00.000Z",
+						},
 					],
 					summary: {
-						totalItems: 2,
-						message: "Successfully created 2 items",
+						totalItems: 1,
+						message: "Successfully created 1 item",
 					},
 				},
 			},
@@ -235,7 +266,6 @@ export const BulkCreateItemResponse = ResponseWrapper(
 );
 
 // Request/Response schemas
-export const CreateItemBody = ItemBaseSchema;
 export const UpdateItemBody = Type.Partial(ItemBaseSchema);
 
 export const UpdateStockBody = Type.Object({
@@ -251,34 +281,121 @@ export const UpdateStockBody = Type.Object({
 
 // Item filters for listing
 export const ItemQueryParams = Type.Object({
-	page: Type.Optional(Type.Number({ minimum: 1, default: 1 })),
+	page: Type.Optional(
+		Type.Number({
+			minimum: 1,
+			default: 1,
+			description: "Page number for pagination",
+			examples: [1, 2, 3],
+		})
+	),
 	limit: Type.Optional(
-		Type.Number({ minimum: 1, maximum: 100, default: 10 })
+		Type.Number({
+			minimum: 1,
+			maximum: 100,
+			default: 10,
+			description: "Number of items per page",
+			examples: [10, 20, 50],
+		})
 	),
-	search: Type.Optional(Type.String()),
-	tags: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
-	minPrice: Type.Optional(Type.Number({ minimum: 0 })),
-	maxPrice: Type.Optional(Type.Number({ minimum: 0 })),
+	search: Type.Optional(
+		Type.String({
+			description: "Search term to filter items",
+			examples: ["cotton shirt", "blue jeans"],
+		})
+	),
+	tags: Type.Optional(
+		Type.Union(
+			[
+				Type.String({
+					description: "Single tag to filter items",
+					examples: ["clothing", "electronics"],
+				}),
+				Type.Array(
+					Type.String({
+						description: "Multiple tags to filter items",
+						examples: ["clothing", "premium"],
+					})
+				),
+			],
+			{
+				description: "Filter items by one or more tags",
+				examples: ["clothing", ["clothing", "premium"]],
+			}
+		)
+	),
+	minPrice: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			description: "Minimum price filter",
+			examples: [10, 20, 50],
+		})
+	),
+	maxPrice: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			description: "Maximum price filter",
+			examples: [100, 200, 500],
+		})
+	),
 	status: Type.Optional(
-		Type.Union([
-			Type.Literal("active"),
-			Type.Literal("discontinued"),
-			Type.Literal("draft"),
-		])
+		Type.Union(
+			[
+				Type.Literal("active"),
+				Type.Literal("discontinued"),
+				Type.Literal("draft"),
+			],
+			{
+				description: "Filter items by their status",
+				examples: ["active", "discontinued", "draft"],
+			}
+		)
 	),
-	supplier: Type.Optional(Type.String({ pattern: "^[0-9a-fA-F]{24}$" })),
-	minRating: Type.Optional(Type.Number({ minimum: 0, maximum: 5 })),
-	inStock: Type.Optional(Type.Boolean()),
+	supplier: Type.Optional(
+		Type.String({
+			pattern: "^[0-9a-fA-F]{24}$",
+			description: "Filter items by supplier ID",
+			examples: ["507f1f77bcf86cd799439011"],
+		})
+	),
+	minRating: Type.Optional(
+		Type.Number({
+			minimum: 0,
+			maximum: 5,
+			description: "Filter items by minimum rating",
+			examples: [3, 4, 4.5],
+		})
+	),
+	inStock: Type.Optional(
+		Type.Boolean({
+			description: "Filter items by stock availability",
+			examples: [true, false],
+		})
+	),
 	sortBy: Type.Optional(
-		Type.Union([
-			Type.Literal("effectivePrice"),
-			Type.Literal("ratings.average"),
-			Type.Literal("numberOfSales"),
-			Type.Literal("createdAt"),
-		])
+		Type.Union(
+			[
+				Type.Literal("effectivePrice"),
+				Type.Literal("ratings.average"),
+				Type.Literal("numberOfSales"),
+				Type.Literal("createdAt"),
+			],
+			{
+				description: "Field to sort the results by",
+				examples: [
+					"effectivePrice",
+					"ratings.average",
+					"numberOfSales",
+					"createdAt",
+				],
+			}
+		)
 	),
 	sortOrder: Type.Optional(
-		Type.Union([Type.Literal("asc"), Type.Literal("desc")])
+		Type.Union([Type.Literal("asc"), Type.Literal("desc")], {
+			description: "Sort order direction",
+			examples: ["asc", "desc"],
+		})
 	),
 });
 

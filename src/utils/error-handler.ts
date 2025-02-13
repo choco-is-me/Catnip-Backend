@@ -11,6 +11,14 @@ interface StandardError {
 
 // Enhanced error types for consistency
 export const ErrorTypes = {
+	// Card Validation Errors
+	CARD_VALIDATION_ERROR: "Card Validation Error",
+	CARD_FORMAT_ERROR: "Card Format Error",
+	CARD_NETWORK_ERROR: "Card Network Error",
+	CARD_EXPIRED_ERROR: "Card Expired",
+	CARD_SECURITY_ERROR: "Card Security Error",
+	CARD_LIMIT_ERROR: "Card Limit Error",
+
 	// Fingerprint related errors
 	FINGERPRINT_MISMATCH: "Fingerprint Mismatch",
 	FINGERPRINT_MISSING: "Fingerprint Missing",
@@ -96,6 +104,59 @@ export const createError = (
 
 // Enhanced predefined error responses
 export const CommonErrors = {
+	// Card errors
+	cardNotFound: () =>
+		createError(404, ErrorTypes.NOT_FOUND, "Card not found"),
+
+	invalidCardNetwork: () =>
+		createError(
+			400,
+			ErrorTypes.CARD_NETWORK_ERROR,
+			"Unsupported card network. Only Visa and Mastercard are accepted"
+		),
+
+	invalidCardFormat: (network: string) =>
+		createError(
+			400,
+			ErrorTypes.CARD_FORMAT_ERROR,
+			`Invalid ${network} card number format`
+		),
+
+	invalidLuhnCheck: () =>
+		createError(
+			400,
+			ErrorTypes.CARD_VALIDATION_ERROR,
+			"Invalid card number (failed checksum validation)"
+		),
+
+	expiredCard: () =>
+		createError(
+			400,
+			ErrorTypes.CARD_EXPIRED_ERROR,
+			"Card has expired or expiration date is invalid"
+		),
+
+	cardLimitExceeded: (limit: number) =>
+		createError(
+			400,
+			ErrorTypes.CARD_LIMIT_ERROR,
+			`Maximum card limit (${limit}) reached for this account`
+		),
+
+	duplicateCard: () =>
+		createError(
+			409,
+			ErrorTypes.DUPLICATE_ERROR,
+			"This card is already registered to your account"
+		),
+
+	cardSecurityError: () =>
+		createError(
+			403,
+			ErrorTypes.CARD_SECURITY_ERROR,
+			"This card is registered to another account"
+		),
+
 	// Fingerprint related errors
 	fingerprintMismatch: () =>
 		createError(
@@ -185,10 +246,6 @@ export const CommonErrors = {
 			ErrorTypes.FORBIDDEN,
 			`This operation requires ${requiredRole} role`
 		),
-
-	// Card errors
-	cardNotFound: () =>
-		createError(404, ErrorTypes.NOT_FOUND, "Card not found"),
 
 	// Resource errors
 	resourceConflict: (resource: string) =>

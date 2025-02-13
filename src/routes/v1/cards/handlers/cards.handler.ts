@@ -2,7 +2,7 @@
 import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
-import { Card } from "../../../../models/Card";
+import { Card, CardNetwork } from "../../../../models/Card";
 import { User } from "../../../../models/User";
 import {
 	CreateCardBody,
@@ -22,6 +22,8 @@ import {
 import { withTransaction } from "../../../../utils/transaction.utils";
 
 export class CardsHandler {
+	private static readonly MAX_CARDS_PER_USER: number = 5;
+
 	private static async checkForDuplicateCard(
 		cardNumber: string,
 		session?: mongoose.ClientSession
@@ -43,17 +45,14 @@ export class CardsHandler {
 			return { isDuplicate: false };
 		} catch (error) {
 			Logger.error(error as Error, "CheckDuplicateCard");
-			throw createError(
-				500,
-				ErrorTypes.DATABASE_ERROR,
-				"Failed to check for duplicate card"
-			);
+			throw CommonErrors.databaseError("duplicate card check");
 		}
 	}
 
-	private static validateCardData(
-		cardData: Static<typeof CreateCardBody>
-	): void {
+	private static validateCardData(cardData: Static<typeof CreateCardBody>): {
+		isValid: boolean;
+		network: CardNetwork | null;
+	} {
 		const currentYear = new Date().getFullYear() % 100;
 		const currentMonth = new Date().getMonth() + 1;
 		const [expMonth, expYear] = cardData.expirationDate
@@ -62,52 +61,54 @@ export class CardsHandler {
 
 		// Validate expiration date
 		if (!expMonth || !expYear || expMonth < 1 || expMonth > 12) {
-			throw createError(
-				400,
-				ErrorTypes.INVALID_FORMAT,
-				"Invalid expiration date format"
-			);
+			throw CommonErrors.expiredCard();
 		}
 
 		if (
 			expYear < currentYear ||
 			(expYear === currentYear && expMonth < currentMonth)
 		) {
-			throw createBusinessError("Card has expired");
+			throw CommonErrors.expiredCard();
 		}
 
-		// Validate card number format and checksum
-		if (!this.validateCardNumberLuhn(cardData.cardNumber)) {
-			throw createError(
-				400,
-				ErrorTypes.VALIDATION_ERROR,
-				"Invalid card number"
-			);
+		// Clean card number
+		const cleanCardNumber = cardData.cardNumber.replace(/\D/g, "");
+
+		// Detect card network
+		const network = Card.detectCardNetwork(cleanCardNumber);
+		if (!network) {
+			throw CommonErrors.invalidCardNetwork();
 		}
 
 		// Validate name format
 		if (!/^[A-Za-z\s]+$/.test(cardData.nameOnCard)) {
 			throw createError(
 				400,
-				ErrorTypes.INVALID_FORMAT,
+				ErrorTypes.CARD_FORMAT_ERROR,
 				"Name on card can only contain letters and spaces"
 			);
 		}
+
+		// Validate Luhn algorithm
+		const isValidLuhn = this.validateCardNumberLuhn(cleanCardNumber);
+		if (!isValidLuhn) {
+			throw CommonErrors.invalidLuhnCheck();
+		}
+
+		return { isValid: true, network };
 	}
 
 	private static validateCardNumberLuhn(cardNumber: string): boolean {
-		const cleanNumber = cardNumber.replace(/\D/g, "");
-
-		// Check if card number is too short or too long
-		if (cleanNumber.length < 13 || cleanNumber.length > 19) {
+		// Check if card number length is valid
+		if (cardNumber.length < 13 || cardNumber.length > 19) {
 			return false;
 		}
 
 		let sum = 0;
 		let isEven = false;
 
-		for (let i = cleanNumber.length - 1; i >= 0; i--) {
-			let digit = parseInt(cleanNumber.charAt(i));
+		for (let i = cardNumber.length - 1; i >= 0; i--) {
+			let digit = parseInt(cardNumber.charAt(i));
 
 			if (isEven) {
 				digit *= 2;
@@ -161,15 +162,18 @@ export class CardsHandler {
 			const cardCount = await Card.countDocuments({ userId }).session(
 				session
 			);
-			const MAX_CARDS_PER_USER = 5;
-			if (cardCount >= MAX_CARDS_PER_USER) {
-				throw createBusinessError(
-					`Maximum card limit (${MAX_CARDS_PER_USER}) reached`
+			if (cardCount >= CardsHandler.MAX_CARDS_PER_USER) {
+				throw CommonErrors.cardLimitExceeded(
+					CardsHandler.MAX_CARDS_PER_USER
 				);
 			}
 
-			// Validate card data
-			CardsHandler.validateCardData(cardData);
+			// Validate card data and detect network
+			const { isValid, network } =
+				CardsHandler.validateCardData(cardData);
+			if (!isValid || !network) {
+				throw CommonErrors.invalidCardFormat(network || "unknown");
+			}
 
 			// Check for duplicate card
 			const { isDuplicate, existingUserId } =
@@ -184,19 +188,16 @@ export class CardsHandler {
 						`Attempt to add card registered to another user. Requesting user: ${userId}, Card owner: ${existingUserId}`,
 						"CardsHandler"
 					);
-					throw createSecurityError(
-						"This card is registered to another account"
-					);
+					throw CommonErrors.cardSecurityError();
 				}
-				throw createBusinessError(
-					"This card is already registered to your account"
-				);
+				throw CommonErrors.duplicateCard();
 			}
 
-			// Create and save new card
+			// Create and save new card with network information
 			const newCard = new Card({
 				...cardData,
 				userId,
+				network,
 			});
 
 			await newCard.save({ session });
@@ -243,12 +244,18 @@ export class CardsHandler {
 		}>,
 		reply: FastifyReply
 	) {
-		try {
+		return withTransaction(async (session) => {
 			const { userId } = request.params;
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
-				return sendError(reply, CommonErrors.invalidFormat("user ID"));
+				throw CommonErrors.invalidFormat("user ID");
 			}
 
+			Logger.debug(
+				`Starting card retrieval for user: ${userId}`,
+				"CardsHandler"
+			);
+
+			// Destructure and validate query parameters
 			const {
 				page = 1,
 				limit = 10,
@@ -256,89 +263,116 @@ export class CardsHandler {
 				order = "desc",
 			} = request.query;
 
-			// Validate pagination parameters
-			if (page < 1 || limit < 1 || limit > 100) {
-				return sendError(
-					reply,
-					createError(
-						400,
-						ErrorTypes.INVALID_FORMAT,
-						"Invalid pagination parameters"
-					)
-				);
-			}
-
-			// Validate sort parameters
-			const allowedSortFields = ["createdAt", "updatedAt", "nameOnCard"];
-			if (!allowedSortFields.includes(sortBy)) {
-				return sendError(
-					reply,
-					createError(
-						400,
-						ErrorTypes.INVALID_FORMAT,
-						`Invalid sort field. Allowed fields: ${allowedSortFields.join(
-							", "
-						)}`
-					)
-				);
-			}
-
-			// Check user existence
-			const userExists = await User.exists({ _id: userId });
-			if (!userExists) {
-				return sendError(reply, CommonErrors.userNotFound());
-			}
-
-			const [cards, total] = await Promise.all([
-				Card.find({ userId })
-					.sort({ [sortBy]: order === "desc" ? -1 : 1 })
-					.skip((page - 1) * limit)
-					.limit(limit)
-					.lean(),
-				Card.countDocuments({ userId }),
-			]);
-
-			const totalPages = Math.ceil(total / limit);
-
-			// Validate requested page number
-			if (page > totalPages && total > 0) {
-				return sendError(
-					reply,
-					createError(
-						400,
-						ErrorTypes.INVALID_FORMAT,
-						`Page ${page} exceeds available pages (${totalPages})`
-					)
-				);
-			}
-
-			Logger.info(
-				`Retrieved ${cards.length} cards for user ${userId} (page ${page} of ${totalPages})`,
-				"CardsHandler"
+			// Enhanced pagination validation
+			const validatedPage = Math.max(1, Math.floor(Number(page)));
+			const validatedLimit = Math.min(
+				100,
+				Math.max(1, Math.floor(Number(limit)))
 			);
 
-			return reply.code(200).send({
-				success: true,
-				data: {
-					cards: cards.map((card) => ({
-						...card,
-						createdAt: card.createdAt.toISOString(),
-						updatedAt: card.updatedAt.toISOString(),
-					})),
-					total,
-					page,
-					totalPages,
-				},
-			});
-		} catch (error) {
-			if (error instanceof mongoose.Error) {
-				return sendError(
-					reply,
-					CommonErrors.databaseError("card retrieval")
+			if (validatedPage !== page || validatedLimit !== limit) {
+				throw createError(
+					400,
+					ErrorTypes.INVALID_FORMAT,
+					"Invalid pagination parameters. Page must be ≥ 1, limit must be between 1 and 100"
 				);
 			}
-			return sendError(reply, error as Error);
-		}
+
+			// Validate sort parameters with specific error messages
+			const allowedSortFields = [
+				"createdAt",
+				"updatedAt",
+				"nameOnCard",
+				"network",
+			] as const;
+			if (
+				!allowedSortFields.includes(
+					sortBy as (typeof allowedSortFields)[number]
+				)
+			) {
+				throw createError(
+					400,
+					ErrorTypes.INVALID_FORMAT,
+					`Invalid sort field. Allowed fields: ${allowedSortFields.join(
+						", "
+					)}`
+				);
+			}
+
+			// Check user existence with session
+			const user = await User.findById(userId)
+				.select("_id")
+				.session(session)
+				.lean();
+
+			if (!user) {
+				throw CommonErrors.userNotFound();
+			}
+
+			try {
+				// Get cards with pagination and sorting
+				const [cards, total] = await Promise.all([
+					Card.find({ userId })
+						.sort({ [sortBy]: order === "desc" ? -1 : 1 })
+						.skip((validatedPage - 1) * validatedLimit)
+						.limit(validatedLimit)
+						.session(session)
+						.lean(),
+					Card.countDocuments({ userId }).session(session),
+				]);
+
+				const totalPages = Math.ceil(total / validatedLimit);
+
+				// Validate requested page number against total pages
+				if (validatedPage > totalPages && total > 0) {
+					throw createError(
+						400,
+						ErrorTypes.INVALID_FORMAT,
+						`Page ${validatedPage} exceeds available pages (${totalPages})`
+					);
+				}
+
+				// Mask sensitive card information for response
+				const maskedCards = cards.map((card) => ({
+					...card,
+					cardNumber: `****${card.cardNumber.slice(-4)}`, // Only show last 4 digits
+					expirationDate: card.expirationDate,
+					nameOnCard: card.nameOnCard,
+					network: card.network,
+					isDefault: card.isDefault,
+					_id: card._id,
+					userId: card.userId,
+					createdAt: card.createdAt.toISOString(),
+					updatedAt: card.updatedAt.toISOString(),
+				}));
+
+				Logger.info(
+					`Retrieved ${cards.length} cards for user ${userId} (page ${validatedPage} of ${totalPages})`,
+					"CardsHandler"
+				);
+
+				return reply.code(200).send({
+					success: true,
+					data: {
+						cards: maskedCards,
+						pagination: {
+							total,
+							page: validatedPage,
+							totalPages,
+							hasNext: validatedPage < totalPages,
+							hasPrev: validatedPage > 1,
+							limit: validatedLimit,
+						},
+					},
+				});
+			} catch (error) {
+				Logger.error(error as Error, "CardsHandler");
+				if (error instanceof mongoose.Error) {
+					throw CommonErrors.databaseError("card retrieval");
+				}
+				throw error;
+			}
+		}, "CardsHandler");
 	}
 
 	async deleteCard(
@@ -350,7 +384,12 @@ export class CardsHandler {
 		return withTransaction(async (session) => {
 			const { userId, cardId } = request.params;
 
-			// Validate IDs
+			Logger.debug(
+				`Starting card deletion process for user ${userId}, card ${cardId}`,
+				"CardsHandler"
+			);
+
+			// Enhanced ID validation
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
 				throw CommonErrors.invalidFormat("user ID");
 			}
@@ -358,63 +397,161 @@ export class CardsHandler {
 				throw CommonErrors.invalidFormat("card ID");
 			}
 
-			// Check user existence
-			const userExists = await User.exists({ _id: userId }).session(
-				session
-			);
-			if (!userExists) {
-				throw CommonErrors.userNotFound();
-			}
+			try {
+				// Check user existence with select optimization
+				const user = await User.findById(userId)
+					.select("_id role")
+					.session(session)
+					.lean();
 
-			// Find the card
-			const card = await Card.findOne({ _id: cardId, userId }).session(
-				session
-			);
-			if (!card) {
-				throw CommonErrors.cardNotFound();
-			}
+				if (!user) {
+					throw CommonErrors.userNotFound();
+				}
 
-			// Check if card has pending transactions
-			const hasPendingTransactions = false; // Implement based on your business logic
-			if (hasPendingTransactions) {
-				throw createBusinessError(
-					"Cannot delete card with pending transactions"
-				);
-			}
+				// Find the card with ownership validation
+				const card = await Card.findOne({
+					_id: cardId,
+				})
+					.session(session)
+					.lean();
 
-			// Delete the card
-			await Card.deleteOne({ _id: cardId, userId }).session(session);
+				if (!card) {
+					throw CommonErrors.cardNotFound();
+				}
 
-			// Handle default card reassignment if necessary
-			if (card.isDefault) {
-				const anotherCard = await Card.findOne({ userId })
-					.sort({ createdAt: -1 })
-					.session(session);
-
-				if (anotherCard) {
-					await Card.findByIdAndUpdate(
-						anotherCard._id,
-						{ isDefault: true },
-						{ session }
-					);
-					Logger.debug(
-						`New default card set: ${anotherCard._id}`,
+				// Validate card ownership
+				if (card.userId.toString() !== userId) {
+					Logger.warn(
+						`Unauthorized card deletion attempt - User ${userId} attempted to delete card ${cardId} owned by ${card.userId}`,
 						"CardsHandler"
 					);
+					throw createError(
+						403,
+						ErrorTypes.CARD_SECURITY_ERROR,
+						"You do not have permission to delete this card"
+					);
 				}
+
+				// Check for specific business rules
+				const hasActiveRecurringPayments =
+					await this.checkRecurringPayments(cardId, session);
+				if (hasActiveRecurringPayments) {
+					throw createBusinessError(
+						"Cannot delete card with active recurring payments. Please cancel all recurring payments first."
+					);
+				}
+
+				const hasPendingTransactions =
+					await this.checkPendingTransactions(cardId, session);
+				if (hasPendingTransactions) {
+					throw createBusinessError(
+						"Cannot delete card with pending transactions. Please wait for all transactions to complete."
+					);
+				}
+
+				// Delete the card with ownership check
+				const deleteResult = await Card.deleteOne({
+					_id: cardId,
+					userId, // Double-check ownership
+				}).session(session);
+
+				if (deleteResult.deletedCount === 0) {
+					throw createError(
+						404,
+						ErrorTypes.NOT_FOUND,
+						"Card not found or already deleted"
+					);
+				}
+
+				// Handle default card reassignment if this was the default card
+				if (card.isDefault) {
+					const anotherCard = await Card.findOne({
+						userId,
+						_id: { $ne: cardId }, // Exclude the deleted card
+					})
+						.sort({ createdAt: -1 })
+						.session(session);
+
+					if (anotherCard) {
+						await Card.findByIdAndUpdate(
+							anotherCard._id,
+							{
+								isDefault: true,
+								$currentDate: { updatedAt: true },
+							},
+							{
+								session,
+								new: true,
+								runValidators: true,
+							}
+						);
+						Logger.debug(
+							`New default card set: ${anotherCard._id}`,
+							"CardsHandler"
+						);
+					}
+				}
+
+				// Get remaining cards info
+				const [remainingCount, remainingCards] = await Promise.all([
+					Card.countDocuments({ userId }).session(session),
+					Card.find({ userId })
+						.select("_id isDefault")
+						.sort({ createdAt: -1 })
+						.limit(1)
+						.session(session)
+						.lean(),
+				]);
+
+				Logger.info(
+					`Card ${cardId} deleted successfully for user ${userId}. Remaining cards: ${remainingCount}`,
+					"CardsHandler"
+				);
+
+				// Return comprehensive response
+				return reply.code(200).send({
+					success: true,
+					data: {
+						message: "Card deleted successfully",
+						cardInfo: {
+							wasDefault: card.isDefault,
+							network: card.network,
+							lastFour: card.cardNumber.slice(-4),
+						},
+						remainingCards: {
+							count: remainingCount,
+							hasDefault: remainingCards.some((c) => c.isDefault),
+						},
+					},
+				});
+			} catch (error) {
+				// Log the full error for debugging but send a safe response
+				Logger.error(error as Error, "CardsHandler");
+
+				if (error instanceof mongoose.Error) {
+					throw CommonErrors.databaseError("card deletion");
+				}
+				throw error;
 			}
-
-			Logger.info(
-				`Card ${cardId} deleted successfully for user ${userId}`,
-				"CardsHandler"
-			);
-
-			return reply.code(200).send({
-				success: true,
-				data: {
-					message: "Card deleted successfully",
-				},
-			});
 		}, "CardsHandler");
+	}
+
+	// Helper methods for business rule validation
+	private async checkRecurringPayments(
+		cardId: string,
+		session: mongoose.ClientSession
+	): Promise<boolean> {
+		// Implement your recurring payments check logic here
+		// This is a placeholder that always returns false
+		return false;
+	}
+
+	private async checkPendingTransactions(
+		cardId: string,
+		session: mongoose.ClientSession
+	): Promise<boolean> {
+		// Implement your pending transactions check logic here
+		// This is a placeholder that always returns false
+		return false;
 	}
 }
