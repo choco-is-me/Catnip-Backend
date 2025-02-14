@@ -15,9 +15,7 @@ import {
 	CommonErrors,
 	createBusinessError,
 	createError,
-	createSecurityError,
 	ErrorTypes,
-	sendError,
 } from "../../../../utils/error-handler";
 import { withTransaction } from "../../../../utils/transaction.utils";
 
@@ -122,6 +120,25 @@ export class CardsHandler {
 		}
 
 		return sum % 10 === 0;
+	}
+
+	// Helper methods for business rule validation
+	private async checkRecurringPayments(
+		cardId: string,
+		session: mongoose.ClientSession
+	): Promise<boolean> {
+		// Implement your recurring payments check logic here
+		// This is a placeholder that always returns false
+		return false;
+	}
+
+	private async checkPendingTransactions(
+		cardId: string,
+		session: mongoose.ClientSession
+	): Promise<boolean> {
+		// Implement your pending transactions check logic here
+		// This is a placeholder that always returns false
+		return false;
 	}
 
 	async addCard(
@@ -536,22 +553,126 @@ export class CardsHandler {
 		}, "CardsHandler");
 	}
 
-	// Helper methods for business rule validation
-	private async checkRecurringPayments(
-		cardId: string,
-		session: mongoose.ClientSession
-	): Promise<boolean> {
-		// Implement your recurring payments check logic here
-		// This is a placeholder that always returns false
-		return false;
-	}
+	async setDefaultCard(
+		request: FastifyRequest<{
+			Params: Static<typeof ParamsWithUserIdAndCardId>;
+		}>,
+		reply: FastifyReply
+	) {
+		return withTransaction(async (session) => {
+			const { userId, cardId } = request.params;
 
-	private async checkPendingTransactions(
-		cardId: string,
-		session: mongoose.ClientSession
-	): Promise<boolean> {
-		// Implement your pending transactions check logic here
-		// This is a placeholder that always returns false
-		return false;
+			Logger.debug(
+				`Starting default card update process for user ${userId}, card ${cardId}`,
+				"CardsHandler"
+			);
+
+			// Validate IDs format
+			if (!mongoose.Types.ObjectId.isValid(userId)) {
+				throw CommonErrors.invalidFormat("user ID");
+			}
+			if (!mongoose.Types.ObjectId.isValid(cardId)) {
+				throw CommonErrors.invalidFormat("card ID");
+			}
+
+			try {
+				// Find the card to be set as default
+				const newDefaultCard = await Card.findOne({
+					_id: cardId,
+					userId,
+				}).session(session);
+
+				if (!newDefaultCard) {
+					throw CommonErrors.cardNotFound();
+				}
+
+				// Check if card is already default
+				if (newDefaultCard.isDefault) {
+					throw createBusinessError(
+						"This card is already set as default"
+					);
+				}
+
+				// Find current default card
+				const currentDefaultCard = await Card.findOne({
+					userId,
+					isDefault: true,
+				}).session(session);
+
+				if (!currentDefaultCard) {
+					Logger.warn(
+						`No default card found for user ${userId} during default card update`,
+						"CardsHandler"
+					);
+				}
+
+				// Update both cards in parallel
+				const [updatedCard, previousDefault] = await Promise.all([
+					// Set new default card
+					Card.findByIdAndUpdate(
+						cardId,
+						{
+							isDefault: true,
+							$currentDate: { updatedAt: true },
+						},
+						{
+							new: true,
+							session,
+							runValidators: true,
+						}
+					),
+					// Update previous default card if it exists
+					currentDefaultCard
+						? Card.findByIdAndUpdate(
+								currentDefaultCard._id,
+								{
+									isDefault: false,
+									$currentDate: { updatedAt: true },
+								},
+								{
+									new: true,
+									session,
+									runValidators: true,
+								}
+						  )
+						: null,
+				]);
+
+				if (!updatedCard) {
+					throw CommonErrors.cardNotFound();
+				}
+
+				Logger.info(
+					`Default card updated successfully for user ${userId}. New default: ${cardId}`,
+					"CardsHandler"
+				);
+
+				// Prepare response with masked card numbers
+				const formatCardForResponse = (card: any) => ({
+					...card.toObject(),
+					cardNumber: `****${card.cardNumber.slice(-4)}`,
+					createdAt: card.createdAt.toISOString(),
+					updatedAt: card.updatedAt.toISOString(),
+				});
+
+				return reply.code(200).send({
+					success: true,
+					data: {
+						message: "Default card updated successfully",
+						updatedCard: formatCardForResponse(updatedCard),
+						previousDefault: previousDefault
+							? formatCardForResponse(previousDefault)
+							: null,
+					},
+				});
+			} catch (error) {
+				Logger.error(error as Error, "CardsHandler");
+
+				if (error instanceof mongoose.Error) {
+					throw CommonErrors.databaseError("default card update");
+				}
+				throw error;
+			}
+		}, "CardsHandler");
 	}
 }

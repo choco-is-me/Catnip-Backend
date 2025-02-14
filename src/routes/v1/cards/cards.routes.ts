@@ -9,6 +9,7 @@ import {
 	PaginationQuery,
 	ParamsWithUserId,
 	ParamsWithUserIdAndCardId,
+	UpdateDefaultCardResponseSchema,
 } from "../../../schemas";
 import { CardsHandler } from "./handlers/cards.handler";
 
@@ -20,7 +21,7 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 		Params: Static<typeof ParamsWithUserId>;
 		Body: Static<typeof CreateCardBody>;
 	}>(
-		"/:userId/cards",
+		"/:userId",
 		{
 			schema: {
 				tags: ["Cards"],
@@ -106,12 +107,12 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 		handler.addCard
 	);
 
-	// Get user's cards route with enhanced documentation
+	// Get user's cards route
 	fastify.get<{
 		Params: Static<typeof ParamsWithUserId>;
 		Querystring: Static<typeof PaginationQuery>;
 	}>(
-		"/:userId/cards",
+		"/:userId",
 		{
 			schema: {
 				tags: ["Cards"],
@@ -177,11 +178,11 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 		handler.getCards
 	);
 
-	// Delete card route with enhanced documentation
+	// Delete card route
 	fastify.delete<{
 		Params: Static<typeof ParamsWithUserIdAndCardId>;
 	}>(
-		"/:userId/cards/:cardId",
+		"/:userId/:cardId",
 		{
 			schema: {
 				tags: ["Cards"],
@@ -276,5 +277,90 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 			},
 		},
 		handler.deleteCard
+	);
+
+	// Set default card route
+	fastify.patch<{
+		Params: Static<typeof ParamsWithUserIdAndCardId>;
+	}>(
+		"/:userId/:cardId/default",
+		{
+			schema: {
+				tags: ["Cards"],
+				description: "Set a card as the default payment method",
+				summary: "Update default card",
+				params: ParamsWithUserIdAndCardId,
+				response: {
+					200: UpdateDefaultCardResponseSchema,
+					400: {
+						description: "Invalid parameters",
+						properties: {
+							success: { type: "boolean", example: false },
+							error: {
+								type: "string",
+								example: "INVALID_FORMAT",
+							},
+							message: {
+								type: "string",
+								example: "Invalid card ID format",
+							},
+							code: { type: "number", example: 400 },
+						},
+					},
+					403: {
+						description: "Permission error",
+						properties: {
+							success: { type: "boolean", example: false },
+							error: {
+								type: "string",
+								example: "CARD_SECURITY_ERROR",
+							},
+							message: {
+								type: "string",
+								example:
+									"You do not have permission to modify this card",
+							},
+							code: { type: "number", example: 403 },
+						},
+					},
+					404: {
+						description: "Card not found",
+						properties: {
+							success: { type: "boolean", example: false },
+							error: { type: "string", example: "NOT_FOUND" },
+							message: {
+								type: "string",
+								example: "Card not found",
+							},
+							code: { type: "number", example: 404 },
+						},
+					},
+					500: {
+						description: "Server error",
+						properties: {
+							success: { type: "boolean", example: false },
+							error: {
+								type: "string",
+								example: "INTERNAL_ERROR",
+							},
+							message: {
+								type: "string",
+								example: "An unexpected error occurred",
+							},
+							code: { type: "number", example: 500 },
+						},
+					},
+				},
+			},
+			...fastify.protectedRoute(["user", "admin"]),
+			preHandler: async (request, reply) => {
+				const hasPermission = await fastify.checkOwnership(
+					request,
+					reply
+				);
+				if (!hasPermission) return;
+			},
+		},
+		handler.setDefaultCard
 	);
 }

@@ -15,10 +15,10 @@ const CardNetworkEnum = Type.Union(
 const CardBaseSchema = Type.Object({
 	cardNumber: Type.String({
 		pattern:
-			"^(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|2(?:2(?:2[1-9][0-9]{12}|[3-9][0-9]{13})|[3-6][0-9]{14}|7(?:[0-1][0-9]{13}|20[0-9]{12})))$",
+			"^(?:4[0-9]{15}|5[1-5][0-9]{14}|2(22[1-9][0-9]{12}|2[3-9][0-9]{13}|[3-6][0-9]{14}|7[0-1][0-9]{13}|720[0-9]{12}))$",
 		description:
-			"Card number (Visa: 13-16 digits starting with 4, Mastercard: 16 digits starting with 51-55 or 2221-2720)",
-		examples: ["4111111111111111"],
+			"Card number (Visa: 16 digits starting with 4, Mastercard: 16 digits starting with 51-55 or 2221-2720)",
+		examples: ["4532015112830366"],
 	}),
 	expirationDate: Type.String({
 		pattern: "^(0[1-9]|1[0-2])/[0-9]{2}$",
@@ -32,7 +32,7 @@ const CardBaseSchema = Type.Object({
 		description: "Cardholder name as appears on card (uppercase)",
 		examples: ["JOHN A DOE"],
 	}),
-	network: CardNetworkEnum,
+	network: Type.Optional(CardNetworkEnum),
 	isDefault: Type.Optional(
 		Type.Boolean({
 			description: "Whether this is the default payment method",
@@ -215,5 +215,50 @@ export const CardDeleteResponseSchema = ResponseWrapper(
 				},
 			},
 		],
+	}
+);
+
+// Example for default card update response
+const defaultCardUpdateExample = {
+	success: true as const,
+	data: {
+		message: "Default card updated successfully",
+		updatedCard: {
+			_id: "507f1f77bcf86cd799439012",
+			userId: "507f1f77bcf86cd799439011",
+			cardNumber: "****1111",
+			expirationDate: "12/25",
+			nameOnCard: "JOHN DOE",
+			network: "visa",
+			isDefault: true,
+			createdAt: "2023-01-01T00:00:00.000Z",
+			updatedAt: "2023-01-01T00:00:00.000Z",
+		},
+		previousDefault: {
+			_id: "507f1f77bcf86cd799439013",
+			userId: "507f1f77bcf86cd799439011",
+			cardNumber: "****2222",
+			expirationDate: "11/24",
+			nameOnCard: "JOHN DOE",
+			network: "mastercard",
+			isDefault: false,
+			createdAt: "2023-01-01T00:00:00.000Z",
+			updatedAt: "2023-01-01T00:00:00.000Z",
+		},
+	},
+};
+
+export const UpdateDefaultCardResponseSchema = ResponseWrapper(
+	Type.Object({
+		message: Type.String({
+			description: "Success message",
+			examples: ["Default card updated successfully"],
+		}),
+		updatedCard: CardSchema,
+		previousDefault: CardSchema,
+	}),
+	{
+		description: "Response for updating default card status",
+		examples: [defaultCardUpdateExample],
 	}
 );

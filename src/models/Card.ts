@@ -87,8 +87,8 @@ CardSchema.statics.compareCardNumbers = async function (
 CardSchema.statics.detectCardNetwork = function (
 	cardNumber: string
 ): CardNetwork | null {
-	// Visa: Starts with 4, length 13 or 16
-	const visaPattern = /^4[0-9]{12}(?:[0-9]{3})?$/;
+	// Visa: Starts with 4, length 16 only
+	const visaPattern = /^4[0-9]{15}$/;
 
 	// Mastercard: Starts with 51-55 or 2221-2720, length 16
 	const mastercardPattern =
