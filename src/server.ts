@@ -9,7 +9,6 @@ import { CONFIG } from "./config";
 import { getHelmetConfig } from "./config/helmet";
 import { swaggerOptions, swaggerUiOptions } from "./config/swagger";
 import authPlugin from "./middlewares/auth";
-import checkOwnershipPlugin from "./middlewares/checkOwnership";
 import rbacPlugin from "./middlewares/rbac";
 import dbPlugin from "./plugins/mongodb";
 import modifierRoutes from "./routes/v1";
@@ -80,7 +79,6 @@ export async function buildServer(): Promise<FastifyInstance> {
 		});
 
 		// Register middleware
-		await server.register(checkOwnershipPlugin);
 		await server.register(authPlugin);
 		await server.register(rbacPlugin);
 

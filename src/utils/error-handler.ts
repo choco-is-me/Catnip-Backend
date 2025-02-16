@@ -259,6 +259,10 @@ export const CommonErrors = {
 	itemNotFound: () =>
 		createError(404, ErrorTypes.ITEM_NOT_FOUND, "Item not found"),
 
+	// Cart errors
+	cartNotFound: () =>
+		createError(404, ErrorTypes.NOT_FOUND, "Cart not found"),
+
 	// Supplier errors
 	supplierNotFound: () =>
 		createError(404, ErrorTypes.SUPPLIER_NOT_FOUND, "Supplier not found"),

@@ -9,10 +9,6 @@ declare module "fastify" {
 			request: FastifyRequest,
 			reply: FastifyReply
 		) => Promise<void>;
-		checkOwnership: (
-			request: FastifyRequest,
-			reply: FastifyReply
-		) => Promise<boolean>;
 		verifyRoles: (
 			roles: UserRole[]
 		) => (request: FastifyRequest, reply: FastifyReply) => Promise<void>;

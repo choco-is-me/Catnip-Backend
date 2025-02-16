@@ -1,9 +1,8 @@
 // src/schemas/cards/index.ts
 import { Type } from "@sinclair/typebox";
 import { ResponseWrapper, Timestamps } from "../common";
-import { ParamsWithUserId } from "../users";
 
-// Add CardNetwork type
+// Card Network type
 const CardNetworkEnum = Type.Union(
 	[Type.Literal("visa"), Type.Literal("mastercard")],
 	{
@@ -12,6 +11,7 @@ const CardNetworkEnum = Type.Union(
 	}
 );
 
+// Base schema for card data
 const CardBaseSchema = Type.Object({
 	cardNumber: Type.String({
 		pattern:
@@ -44,7 +44,6 @@ const CardBaseSchema = Type.Object({
 // Example data for documentation
 const cardExample = {
 	_id: "507f1f77bcf86cd799439012",
-	userId: "507f1f77bcf86cd799439011",
 	cardNumber: "****1111", // Masked for security
 	expirationDate: "12/25",
 	nameOnCard: "JOHN DOE",
@@ -63,16 +62,13 @@ const paginationExample = {
 	limit: 10,
 };
 
+// Complete card schema with system fields
 export const CardSchema = Type.Intersect(
 	[
 		Type.Object({
 			_id: Type.String({
 				pattern: "^[0-9a-fA-F]{24}$",
 				description: "MongoDB ObjectId",
-			}),
-			userId: Type.String({
-				pattern: "^[0-9a-fA-F]{24}$",
-				description: "Owner's user ID",
 			}),
 		}),
 		CardBaseSchema,
@@ -85,16 +81,13 @@ export const CardSchema = Type.Intersect(
 	}
 );
 
-// Parameters schema for card operations
-export const ParamsWithUserIdAndCardId = Type.Intersect([
-	ParamsWithUserId,
-	Type.Object({
-		cardId: Type.String({
-			pattern: "^[0-9a-fA-F]{24}$",
-			description: "Card MongoDB ObjectId",
-		}),
+// Card ID parameter schema
+export const CardIdParam = Type.Object({
+	cardId: Type.String({
+		pattern: "^[0-9a-fA-F]{24}$",
+		description: "Card MongoDB ObjectId",
 	}),
-]);
+});
 
 // Request body schemas
 export const CreateCardBody = CardBaseSchema;
@@ -195,27 +188,7 @@ export const CardDeleteResponseSchema = ResponseWrapper(
 				examples: [true],
 			}),
 		}),
-	}),
-	{
-		description: "Card deletion response with remaining cards info",
-		examples: [
-			{
-				success: true,
-				data: {
-					message: "Card deleted successfully",
-					cardInfo: {
-						wasDefault: true,
-						network: "visa",
-						lastFour: "1111",
-					},
-					remainingCards: {
-						count: 2,
-						hasDefault: true,
-					},
-				},
-			},
-		],
-	}
+	})
 );
 
 // Example for default card update response
@@ -225,7 +198,6 @@ const defaultCardUpdateExample = {
 		message: "Default card updated successfully",
 		updatedCard: {
 			_id: "507f1f77bcf86cd799439012",
-			userId: "507f1f77bcf86cd799439011",
 			cardNumber: "****1111",
 			expirationDate: "12/25",
 			nameOnCard: "JOHN DOE",
@@ -236,7 +208,6 @@ const defaultCardUpdateExample = {
 		},
 		previousDefault: {
 			_id: "507f1f77bcf86cd799439013",
-			userId: "507f1f77bcf86cd799439011",
 			cardNumber: "****2222",
 			expirationDate: "11/24",
 			nameOnCard: "JOHN DOE",
@@ -248,6 +219,7 @@ const defaultCardUpdateExample = {
 	},
 };
 
+// Update default card response
 export const UpdateDefaultCardResponseSchema = ResponseWrapper(
 	Type.Object({
 		message: Type.String({
@@ -255,7 +227,7 @@ export const UpdateDefaultCardResponseSchema = ResponseWrapper(
 			examples: ["Default card updated successfully"],
 		}),
 		updatedCard: CardSchema,
-		previousDefault: CardSchema,
+		previousDefault: Type.Optional(CardSchema),
 	}),
 	{
 		description: "Response for updating default card status",

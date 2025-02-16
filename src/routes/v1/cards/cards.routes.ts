@@ -7,8 +7,6 @@ import {
 	CardsResponseSchema,
 	CreateCardBody,
 	PaginationQuery,
-	ParamsWithUserId,
-	ParamsWithUserIdAndCardId,
 	UpdateDefaultCardResponseSchema,
 } from "../../../schemas";
 import { CardsHandler } from "./handlers/cards.handler";
@@ -18,16 +16,15 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 
 	// Add card route
 	fastify.post<{
-		Params: Static<typeof ParamsWithUserId>;
 		Body: Static<typeof CreateCardBody>;
 	}>(
-		"/:userId",
+		"/",
 		{
 			schema: {
 				tags: ["Cards"],
-				description: "Add a new payment card to user account",
+				description:
+					"Add a new payment card to authenticated user's account",
 				summary: "Add new card",
-				params: ParamsWithUserId,
 				body: CreateCardBody,
 				response: {
 					201: CardResponseSchema,
@@ -46,20 +43,19 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 							code: { type: "number", example: 400 },
 						},
 					},
-					403: {
-						description: "Card security error",
+					401: {
+						description: "Authentication error",
 						properties: {
 							success: { type: "boolean", example: false },
 							error: {
 								type: "string",
-								example: "CARD_SECURITY_ERROR",
+								example: "AUTHENTICATION_ERROR",
 							},
 							message: {
 								type: "string",
-								example:
-									"This card is registered to another account",
+								example: "Invalid or expired token",
 							},
-							code: { type: "number", example: 403 },
+							code: { type: "number", example: 401 },
 						},
 					},
 					409: {
@@ -96,29 +92,21 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 				},
 			},
 			...fastify.protectedRoute(["user", "admin"]),
-			preHandler: async (request, reply) => {
-				const hasPermission = await fastify.checkOwnership(
-					request,
-					reply
-				);
-				if (!hasPermission) return;
-			},
 		},
 		handler.addCard
 	);
 
 	// Get user's cards route
 	fastify.get<{
-		Params: Static<typeof ParamsWithUserId>;
 		Querystring: Static<typeof PaginationQuery>;
 	}>(
-		"/:userId",
+		"/",
 		{
 			schema: {
 				tags: ["Cards"],
-				description: "Get all payment cards associated with a user",
+				description:
+					"Get all payment cards associated with authenticated user",
 				summary: "List user's cards",
-				params: ParamsWithUserId,
 				querystring: PaginationQuery,
 				response: {
 					200: CardsResponseSchema,
@@ -137,16 +125,19 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 							code: { type: "number", example: 400 },
 						},
 					},
-					404: {
-						description: "User not found",
+					401: {
+						description: "Authentication error",
 						properties: {
 							success: { type: "boolean", example: false },
-							error: { type: "string", example: "NOT_FOUND" },
+							error: {
+								type: "string",
+								example: "AUTHENTICATION_ERROR",
+							},
 							message: {
 								type: "string",
-								example: "User not found",
+								example: "Invalid or expired token",
 							},
-							code: { type: "number", example: 404 },
+							code: { type: "number", example: 401 },
 						},
 					},
 					500: {
@@ -167,28 +158,32 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 				},
 			},
 			...fastify.protectedRoute(["user", "admin"]),
-			preHandler: async (request, reply) => {
-				const hasPermission = await fastify.checkOwnership(
-					request,
-					reply
-				);
-				if (!hasPermission) return;
-			},
 		},
 		handler.getCards
 	);
 
 	// Delete card route
 	fastify.delete<{
-		Params: Static<typeof ParamsWithUserIdAndCardId>;
+		Params: { cardId: string };
 	}>(
-		"/:userId/:cardId",
+		"/:cardId",
 		{
 			schema: {
 				tags: ["Cards"],
-				description: "Delete a specific payment card from user account",
+				description:
+					"Delete a specific payment card from authenticated user's account",
 				summary: "Delete card",
-				params: ParamsWithUserIdAndCardId,
+				params: {
+					type: "object",
+					properties: {
+						cardId: {
+							type: "string",
+							pattern: "^[0-9a-fA-F]{24}$",
+							description: "Card MongoDB ObjectId",
+						},
+					},
+					required: ["cardId"],
+				},
 				response: {
 					200: CardDeleteResponseSchema,
 					400: {
@@ -206,20 +201,19 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 							code: { type: "number", example: 400 },
 						},
 					},
-					403: {
-						description: "Permission error",
+					401: {
+						description: "Authentication error",
 						properties: {
 							success: { type: "boolean", example: false },
 							error: {
 								type: "string",
-								example: "CARD_SECURITY_ERROR",
+								example: "AUTHENTICATION_ERROR",
 							},
 							message: {
 								type: "string",
-								example:
-									"You do not have permission to delete this card",
+								example: "Invalid or expired token",
 							},
-							code: { type: "number", example: 403 },
+							code: { type: "number", example: 401 },
 						},
 					},
 					404: {
@@ -232,22 +226,6 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 								example: "Card not found or already deleted",
 							},
 							code: { type: "number", example: 404 },
-						},
-					},
-					422: {
-						description: "Business rule violation",
-						properties: {
-							success: { type: "boolean", example: false },
-							error: {
-								type: "string",
-								example: "BUSINESS_ERROR",
-							},
-							message: {
-								type: "string",
-								example:
-									"Cannot delete card with active recurring payments",
-							},
-							code: { type: "number", example: 422 },
 						},
 					},
 					500: {
@@ -268,28 +246,32 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 				},
 			},
 			...fastify.protectedRoute(["user", "admin"]),
-			preHandler: async (request, reply) => {
-				const hasPermission = await fastify.checkOwnership(
-					request,
-					reply
-				);
-				if (!hasPermission) return;
-			},
 		},
 		handler.deleteCard
 	);
 
 	// Set default card route
 	fastify.patch<{
-		Params: Static<typeof ParamsWithUserIdAndCardId>;
+		Params: { cardId: string };
 	}>(
-		"/:userId/:cardId/default",
+		"/:cardId/default",
 		{
 			schema: {
 				tags: ["Cards"],
-				description: "Set a card as the default payment method",
+				description:
+					"Set a card as the default payment method for authenticated user",
 				summary: "Update default card",
-				params: ParamsWithUserIdAndCardId,
+				params: {
+					type: "object",
+					properties: {
+						cardId: {
+							type: "string",
+							pattern: "^[0-9a-fA-F]{24}$",
+							description: "Card MongoDB ObjectId",
+						},
+					},
+					required: ["cardId"],
+				},
 				response: {
 					200: UpdateDefaultCardResponseSchema,
 					400: {
@@ -307,20 +289,19 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 							code: { type: "number", example: 400 },
 						},
 					},
-					403: {
-						description: "Permission error",
+					401: {
+						description: "Authentication error",
 						properties: {
 							success: { type: "boolean", example: false },
 							error: {
 								type: "string",
-								example: "CARD_SECURITY_ERROR",
+								example: "AUTHENTICATION_ERROR",
 							},
 							message: {
 								type: "string",
-								example:
-									"You do not have permission to modify this card",
+								example: "Invalid or expired token",
 							},
-							code: { type: "number", example: 403 },
+							code: { type: "number", example: 401 },
 						},
 					},
 					404: {
@@ -353,13 +334,6 @@ export default async function cardRoutes(fastify: FastifyInstance) {
 				},
 			},
 			...fastify.protectedRoute(["user", "admin"]),
-			preHandler: async (request, reply) => {
-				const hasPermission = await fastify.checkOwnership(
-					request,
-					reply
-				);
-				if (!hasPermission) return;
-			},
 		},
 		handler.setDefaultCard
 	);

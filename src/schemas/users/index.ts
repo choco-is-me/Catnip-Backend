@@ -1,4 +1,4 @@
-// src/schemas/users/index.ts
+// src/schemas/users/user.schema.ts
 import { Type } from "@sinclair/typebox";
 import { AddressSchema, ResponseWrapper, Timestamps } from "../common";
 
@@ -34,7 +34,7 @@ const UserBaseSchema = Type.Object({
 			examples: ["Acme Corp"],
 		})
 	),
-	role: UserRoleEnum, // Add role to base schema
+	role: UserRoleEnum,
 	address: AddressSchema,
 	phoneNumber: Type.String({
 		pattern: "^[+]?[(]?[0-9]{3}[)]?[-s.]?[0-9]{3}[-s.]?[0-9]{4,6}$",
@@ -55,14 +55,6 @@ export const UserSchema = Type.Intersect([
 	Type.Object(Timestamps),
 ]);
 
-// Parameters schemas
-export const ParamsWithUserId = Type.Object({
-	userId: Type.String({
-		pattern: "^[0-9a-fA-F]{24}$",
-		description: "MongoDB ObjectId",
-	}),
-});
-
 // Request body schemas
 export const CreateUserBody = Type.Intersect([
 	Type.Omit(UserBaseSchema, ["role"]), // Remove role from registration - it's always 'user'
@@ -73,17 +65,24 @@ export const CreateUserBody = Type.Intersect([
 				"^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$",
 			description:
 				"Password must contain at least 8 characters, including one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)",
+			examples: ["StrongP@ss123"],
 		}),
 	}),
 ]);
 
 export const ChangePasswordBody = Type.Object({
+	currentPassword: Type.String({
+		minLength: 8,
+		description: "Current password for verification",
+		examples: ["OldP@ss123"],
+	}),
 	newPassword: Type.String({
 		minLength: 8,
 		pattern:
 			"^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$",
 		description:
 			"Password must contain at least 8 characters, including one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)",
+		examples: ["NewP@ss123"],
 	}),
 });
 
@@ -125,37 +124,26 @@ export const UserResponseSchema = ResponseWrapper(
 	}
 );
 
-export const UsersResponseSchema = ResponseWrapper(
-	Type.Object({
-		users: Type.Array(UserSchema),
-		total: Type.Integer(),
-		page: Type.Integer(),
-		totalPages: Type.Integer(),
-	}),
-	{
-		description: "Users list response",
-		examples: [
-			{
-				success: true,
-				data: {
-					users: [userExample],
-					total: 1,
-					page: 1,
-					totalPages: 1,
-				},
-			},
-		],
-	}
-);
-
 export const DeleteResponseSchema = ResponseWrapper(
 	Type.Object({
-		message: Type.String(),
+		message: Type.String({
+			description: "Success message",
+			examples: ["User account deleted successfully"],
+		}),
+		email: Type.String({
+			format: "email",
+			description: "Email of the deleted account",
+			examples: ["john.doe@example.com"],
+		}),
 	})
 );
 
 export const ChangePasswordResponseSchema = ResponseWrapper(
 	Type.Object({
 		message: Type.Literal("Password changed successfully"),
+		requiresRelogin: Type.Boolean({
+			description: "Indicates if the user needs to login again",
+			examples: [true],
+		}),
 	})
 );

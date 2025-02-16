@@ -3,13 +3,7 @@ import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
 import { Card, CardNetwork } from "../../../../models/Card";
-import { User } from "../../../../models/User";
-import {
-	CreateCardBody,
-	PaginationQuery,
-	ParamsWithUserId,
-	ParamsWithUserIdAndCardId,
-} from "../../../../schemas";
+import { CreateCardBody, PaginationQuery } from "../../../../schemas";
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
@@ -122,34 +116,37 @@ export class CardsHandler {
 		return sum % 10 === 0;
 	}
 
-	// Helper methods for business rule validation
-	private async checkRecurringPayments(
+	private static async verifyCardOwnership(
 		cardId: string,
+		userId: string,
 		session: mongoose.ClientSession
-	): Promise<boolean> {
-		// Implement your recurring payments check logic here
-		// This is a placeholder that always returns false
-		return false;
-	}
+	): Promise<{ card: any; isOwner: boolean }> {
+		const card = await Card.findById(cardId).session(session);
 
-	private async checkPendingTransactions(
-		cardId: string,
-		session: mongoose.ClientSession
-	): Promise<boolean> {
-		// Implement your pending transactions check logic here
-		// This is a placeholder that always returns false
-		return false;
+		if (!card) {
+			throw CommonErrors.cardNotFound();
+		}
+
+		const isOwner = card.userId.toString() === userId;
+		if (!isOwner) {
+			Logger.warn(
+				`Unauthorized card access attempt - User ${userId} attempted to access card ${cardId} owned by ${card.userId}`,
+				"CardsHandler"
+			);
+			throw CommonErrors.forbidden();
+		}
+
+		return { card, isOwner };
 	}
 
 	async addCard(
 		request: FastifyRequest<{
-			Params: Static<typeof ParamsWithUserId>;
 			Body: Static<typeof CreateCardBody>;
 		}>,
 		reply: FastifyReply
 	) {
 		return withTransaction(async (session) => {
-			const { userId } = request.params;
+			const userId = request.user!.userId;
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
 				throw CommonErrors.invalidFormat("user ID");
 			}
@@ -164,16 +161,6 @@ export class CardsHandler {
 				`Starting card creation for user: ${userId}`,
 				"CardsHandler"
 			);
-
-			// Validate user existence
-			const user = await User.findById(userId).session(session);
-			if (!user) {
-				Logger.warn(
-					`Attempted to add card for non-existent user: ${userId}`,
-					"CardsHandler"
-				);
-				throw CommonErrors.userNotFound();
-			}
 
 			// Check user's card limit
 			const cardCount = await Card.countDocuments({ userId }).session(
@@ -256,13 +243,12 @@ export class CardsHandler {
 
 	async getCards(
 		request: FastifyRequest<{
-			Params: Static<typeof ParamsWithUserId>;
 			Querystring: Static<typeof PaginationQuery>;
 		}>,
 		reply: FastifyReply
 	) {
-		return withTransaction(async (session) => {
-			const { userId } = request.params;
+		try {
+			const userId = request.user!.userId;
 			if (!mongoose.Types.ObjectId.isValid(userId)) {
 				throw CommonErrors.invalidFormat("user ID");
 			}
@@ -295,7 +281,7 @@ export class CardsHandler {
 				);
 			}
 
-			// Validate sort parameters with specific error messages
+			// Validate sort parameters
 			const allowedSortFields = [
 				"createdAt",
 				"updatedAt",
@@ -316,160 +302,96 @@ export class CardsHandler {
 				);
 			}
 
-			// Check user existence with session
-			const user = await User.findById(userId)
-				.select("_id")
-				.session(session)
-				.lean();
+			// Get cards with pagination and sorting
+			const [cards, total] = await Promise.all([
+				Card.find({ userId })
+					.sort({ [sortBy]: order === "desc" ? -1 : 1 })
+					.skip((validatedPage - 1) * validatedLimit)
+					.limit(validatedLimit)
+					.lean(),
+				Card.countDocuments({ userId }),
+			]);
 
-			if (!user) {
-				throw CommonErrors.userNotFound();
-			}
+			const totalPages = Math.ceil(total / validatedLimit);
 
-			try {
-				// Get cards with pagination and sorting
-				const [cards, total] = await Promise.all([
-					Card.find({ userId })
-						.sort({ [sortBy]: order === "desc" ? -1 : 1 })
-						.skip((validatedPage - 1) * validatedLimit)
-						.limit(validatedLimit)
-						.session(session)
-						.lean(),
-					Card.countDocuments({ userId }).session(session),
-				]);
-
-				const totalPages = Math.ceil(total / validatedLimit);
-
-				// Validate requested page number against total pages
-				if (validatedPage > totalPages && total > 0) {
-					throw createError(
-						400,
-						ErrorTypes.INVALID_FORMAT,
-						`Page ${validatedPage} exceeds available pages (${totalPages})`
-					);
-				}
-
-				// Mask sensitive card information for response
-				const maskedCards = cards.map((card) => ({
-					...card,
-					cardNumber: `****${card.cardNumber.slice(-4)}`, // Only show last 4 digits
-					expirationDate: card.expirationDate,
-					nameOnCard: card.nameOnCard,
-					network: card.network,
-					isDefault: card.isDefault,
-					_id: card._id,
-					userId: card.userId,
-					createdAt: card.createdAt.toISOString(),
-					updatedAt: card.updatedAt.toISOString(),
-				}));
-
-				Logger.info(
-					`Retrieved ${cards.length} cards for user ${userId} (page ${validatedPage} of ${totalPages})`,
-					"CardsHandler"
+			// Validate requested page number against total pages
+			if (validatedPage > totalPages && total > 0) {
+				throw createError(
+					400,
+					ErrorTypes.INVALID_FORMAT,
+					`Page ${validatedPage} exceeds available pages (${totalPages})`
 				);
-
-				return reply.code(200).send({
-					success: true,
-					data: {
-						cards: maskedCards,
-						pagination: {
-							total,
-							page: validatedPage,
-							totalPages,
-							hasNext: validatedPage < totalPages,
-							hasPrev: validatedPage > 1,
-							limit: validatedLimit,
-						},
-					},
-				});
-			} catch (error) {
-				Logger.error(error as Error, "CardsHandler");
-				if (error instanceof mongoose.Error) {
-					throw CommonErrors.databaseError("card retrieval");
-				}
-				throw error;
 			}
-		}, "CardsHandler");
+
+			// Mask sensitive card information for response
+			const maskedCards = cards.map((card) => ({
+				...card,
+				cardNumber: `****${card.cardNumber.slice(-4)}`,
+				_id: card._id,
+				userId: card.userId,
+				createdAt: card.createdAt.toISOString(),
+				updatedAt: card.updatedAt.toISOString(),
+			}));
+
+			Logger.info(
+				`Retrieved ${cards.length} cards for user ${userId} (page ${validatedPage} of ${totalPages})`,
+				"CardsHandler"
+			);
+
+			return reply.code(200).send({
+				success: true,
+				data: {
+					cards: maskedCards,
+					pagination: {
+						total,
+						page: validatedPage,
+						totalPages,
+						hasNext: validatedPage < totalPages,
+						hasPrev: validatedPage > 1,
+						limit: validatedLimit,
+					},
+				},
+			});
+		} catch (error) {
+			Logger.error(error as Error, "CardsHandler");
+			if (error instanceof mongoose.Error) {
+				throw CommonErrors.databaseError("card retrieval");
+			}
+			throw error;
+		}
 	}
 
 	async deleteCard(
 		request: FastifyRequest<{
-			Params: Static<typeof ParamsWithUserIdAndCardId>;
+			Params: { cardId: string };
 		}>,
 		reply: FastifyReply
 	) {
 		return withTransaction(async (session) => {
-			const { userId, cardId } = request.params;
+			const userId = request.user!.userId;
+			const { cardId } = request.params;
 
 			Logger.debug(
 				`Starting card deletion process for user ${userId}, card ${cardId}`,
 				"CardsHandler"
 			);
 
-			// Enhanced ID validation
-			if (!mongoose.Types.ObjectId.isValid(userId)) {
-				throw CommonErrors.invalidFormat("user ID");
-			}
 			if (!mongoose.Types.ObjectId.isValid(cardId)) {
 				throw CommonErrors.invalidFormat("card ID");
 			}
 
+			// Verify card ownership
+			const { card } = await CardsHandler.verifyCardOwnership(
+				cardId,
+				userId,
+				session
+			);
+
 			try {
-				// Check user existence with select optimization
-				const user = await User.findById(userId)
-					.select("_id role")
-					.session(session)
-					.lean();
-
-				if (!user) {
-					throw CommonErrors.userNotFound();
-				}
-
-				// Find the card with ownership validation
-				const card = await Card.findOne({
-					_id: cardId,
-				})
-					.session(session)
-					.lean();
-
-				if (!card) {
-					throw CommonErrors.cardNotFound();
-				}
-
-				// Validate card ownership
-				if (card.userId.toString() !== userId) {
-					Logger.warn(
-						`Unauthorized card deletion attempt - User ${userId} attempted to delete card ${cardId} owned by ${card.userId}`,
-						"CardsHandler"
-					);
-					throw createError(
-						403,
-						ErrorTypes.CARD_SECURITY_ERROR,
-						"You do not have permission to delete this card"
-					);
-				}
-
-				// Check for specific business rules
-				const hasActiveRecurringPayments =
-					await this.checkRecurringPayments(cardId, session);
-				if (hasActiveRecurringPayments) {
-					throw createBusinessError(
-						"Cannot delete card with active recurring payments. Please cancel all recurring payments first."
-					);
-				}
-
-				const hasPendingTransactions =
-					await this.checkPendingTransactions(cardId, session);
-				if (hasPendingTransactions) {
-					throw createBusinessError(
-						"Cannot delete card with pending transactions. Please wait for all transactions to complete."
-					);
-				}
-
-				// Delete the card with ownership check
+				// Delete the card
 				const deleteResult = await Card.deleteOne({
 					_id: cardId,
-					userId, // Double-check ownership
+					userId,
 				}).session(session);
 
 				if (deleteResult.deletedCount === 0) {
@@ -484,7 +406,7 @@ export class CardsHandler {
 				if (card.isDefault) {
 					const anotherCard = await Card.findOne({
 						userId,
-						_id: { $ne: cardId }, // Exclude the deleted card
+						_id: { $ne: cardId },
 					})
 						.sort({ createdAt: -1 })
 						.session(session);
@@ -525,7 +447,6 @@ export class CardsHandler {
 					"CardsHandler"
 				);
 
-				// Return comprehensive response
 				return reply.code(200).send({
 					success: true,
 					data: {
@@ -542,9 +463,7 @@ export class CardsHandler {
 					},
 				});
 			} catch (error) {
-				// Log the full error for debugging but send a safe response
 				Logger.error(error as Error, "CardsHandler");
-
 				if (error instanceof mongoose.Error) {
 					throw CommonErrors.databaseError("card deletion");
 				}
@@ -555,39 +474,33 @@ export class CardsHandler {
 
 	async setDefaultCard(
 		request: FastifyRequest<{
-			Params: Static<typeof ParamsWithUserIdAndCardId>;
+			Params: { cardId: string };
 		}>,
 		reply: FastifyReply
 	) {
 		return withTransaction(async (session) => {
-			const { userId, cardId } = request.params;
+			const userId = request.user!.userId;
+			const { cardId } = request.params;
 
 			Logger.debug(
 				`Starting default card update process for user ${userId}, card ${cardId}`,
 				"CardsHandler"
 			);
 
-			// Validate IDs format
-			if (!mongoose.Types.ObjectId.isValid(userId)) {
-				throw CommonErrors.invalidFormat("user ID");
-			}
 			if (!mongoose.Types.ObjectId.isValid(cardId)) {
 				throw CommonErrors.invalidFormat("card ID");
 			}
 
+			// Verify card ownership
+			const { card } = await CardsHandler.verifyCardOwnership(
+				cardId,
+				userId,
+				session
+			);
+
 			try {
-				// Find the card to be set as default
-				const newDefaultCard = await Card.findOne({
-					_id: cardId,
-					userId,
-				}).session(session);
-
-				if (!newDefaultCard) {
-					throw CommonErrors.cardNotFound();
-				}
-
 				// Check if card is already default
-				if (newDefaultCard.isDefault) {
+				if (card.isDefault) {
 					throw createBusinessError(
 						"This card is already set as default"
 					);
