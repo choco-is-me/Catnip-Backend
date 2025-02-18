@@ -1,6 +1,9 @@
 // src/models/Cart.ts
 import mongoose, { Document, Schema } from "mongoose";
-import { CART_CONSTANTS, validateVNDValue } from "../constants/cart.constants";
+import {
+	CURRENCY_CONSTANTS,
+	validateVNDValue,
+} from "../constants/currency.constants";
 import { Logger } from "../services/logger.service";
 import { IItem, IVariant, Item } from "./Item";
 
@@ -74,7 +77,7 @@ const CartItemSchema = new Schema<ICartItem>(
 			min: 0,
 			validate: {
 				validator: validateVNDValue,
-				message: CART_CONSTANTS.ERRORS.INVALID_PRICE,
+				message: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE,
 			},
 		},
 		currentPrice: {
@@ -83,7 +86,7 @@ const CartItemSchema = new Schema<ICartItem>(
 			min: 0,
 			validate: {
 				validator: validateVNDValue,
-				message: CART_CONSTANTS.ERRORS.INVALID_PRICE,
+				message: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE,
 			},
 		},
 		effectivePrice: {
@@ -92,7 +95,7 @@ const CartItemSchema = new Schema<ICartItem>(
 			min: 0,
 			validate: {
 				validator: validateVNDValue,
-				message: CART_CONSTANTS.ERRORS.INVALID_PRICE,
+				message: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE,
 			},
 		},
 		specifications: {
@@ -124,8 +127,8 @@ const CartSchema = new Schema<ICartDocument>(
 			type: Number,
 			default: 0,
 			max: [
-				CART_CONSTANTS.MAX_CART_ITEMS,
-				`Cart cannot have more than ${CART_CONSTANTS.MAX_CART_ITEMS} items`,
+				CURRENCY_CONSTANTS.CART.MAX_ITEMS,
+				`Cart cannot have more than ${CURRENCY_CONSTANTS.CART.MAX_ITEMS} items`,
 			],
 		},
 		totalOriginalPrice: {
@@ -133,7 +136,7 @@ const CartSchema = new Schema<ICartDocument>(
 			default: 0,
 			validate: {
 				validator: validateVNDValue,
-				message: CART_CONSTANTS.ERRORS.INVALID_PRICE,
+				message: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE,
 			},
 		},
 		totalEffectivePrice: {
@@ -141,7 +144,7 @@ const CartSchema = new Schema<ICartDocument>(
 			default: 0,
 			validate: {
 				validator: validateVNDValue,
-				message: CART_CONSTANTS.ERRORS.INVALID_PRICE,
+				message: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE,
 			},
 		},
 		lastPriceUpdate: {
@@ -186,21 +189,25 @@ CartSchema.pre("save", async function (next) {
 	// Validate minimum order value
 	if (
 		this.items.length > 0 &&
-		this.totalEffectivePrice < CART_CONSTANTS.MIN_ORDER_VALUE
+		this.totalEffectivePrice < CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE
 	) {
 		next(
 			new Error(
-				CART_CONSTANTS.ERRORS.MIN_ORDER(CART_CONSTANTS.MIN_ORDER_VALUE)
+				CURRENCY_CONSTANTS.ERRORS.MIN_ORDER(
+					CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE
+				)
 			)
 		);
 		return;
 	}
 
 	// Validate maximum order value
-	if (this.totalEffectivePrice > CART_CONSTANTS.MAX_ORDER_VALUE) {
+	if (this.totalEffectivePrice > CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE) {
 		next(
 			new Error(
-				CART_CONSTANTS.ERRORS.MAX_ORDER(CART_CONSTANTS.MAX_ORDER_VALUE)
+				CURRENCY_CONSTANTS.ERRORS.MAX_ORDER(
+					CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE
+				)
 			)
 		);
 		return;
@@ -251,7 +258,7 @@ CartSchema.methods.validateItemLimit = function (
 	newItemCount: number = 1
 ): boolean {
 	const futureItemCount = this.items.length + newItemCount;
-	return futureItemCount <= CART_CONSTANTS.MAX_CART_ITEMS;
+	return futureItemCount <= CURRENCY_CONSTANTS.CART.MAX_ITEMS;
 };
 
 // Method to validate stock before adding/updating

@@ -1,6 +1,10 @@
 // src/models/Item.ts
 import mongoose, { Document, Schema } from "mongoose";
 import { Logger } from "../services/logger.service";
+import {
+	CURRENCY_CONSTANTS,
+	validateVNDPrice,
+} from "../constants/currency.constants";
 
 // Interface for dynamic specifications
 export interface ISpecification {
@@ -65,7 +69,20 @@ const VariantSchema = new Schema(
 		price: {
 			type: Number,
 			required: true,
-			min: 0,
+			validate: {
+				validator: function (value: number): boolean {
+					return validateVNDPrice(value);
+				},
+				message: function (props: { value: number }): string {
+					return props.value < CURRENCY_CONSTANTS.ITEM.MIN_PRICE ||
+						props.value > CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+						? CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+								CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+								CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+						  )
+						: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
+				},
+			},
 		},
 		stockQuantity: {
 			type: Number,
@@ -135,7 +152,20 @@ const ItemSchema = new Schema<IItem>(
 		basePrice: {
 			type: Number,
 			required: true,
-			min: 0,
+			validate: {
+				validator: function (value: number): boolean {
+					return validateVNDPrice(value);
+				},
+				message: function (props: { value: number }): string {
+					return props.value < CURRENCY_CONSTANTS.ITEM.MIN_PRICE ||
+						props.value > CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+						? CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+								CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+								CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+						  )
+						: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
+				},
+			},
 		},
 		priceHistory: [PriceHistorySchema],
 		images: [
@@ -261,10 +291,10 @@ ItemSchema.methods.getCurrentPrice = function (variantSku?: string): number {
 		  this.basePrice
 		: this.basePrice;
 
-	if (this.discount && this.discount.active) {
+	if (this.discount?.active) {
 		const now = new Date();
 		if (now >= this.discount.startDate && now <= this.discount.endDate) {
-			return basePrice * (1 - this.discount.percentage / 100);
+			return Math.round(basePrice * (1 - this.discount.percentage / 100));
 		}
 	}
 	return basePrice;

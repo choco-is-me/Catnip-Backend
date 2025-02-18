@@ -2,7 +2,7 @@
 import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose, { Types } from "mongoose";
-import { CART_CONSTANTS } from "../../../../constants/cart.constants";
+import { CURRENCY_CONSTANTS } from "../../../../constants/currency.constants";
 import { Cart, ICartItem } from "../../../../models/Cart";
 import { Item } from "../../../../models/Item";
 import {
@@ -26,7 +26,7 @@ import { withTransaction } from "../../../../utils/transaction.utils";
 
 export class CartHandler {
 	// Helper method to get or create cart
-	private async getOrCreateCart(
+	private static async getOrCreateCart(
 		userId: string,
 		session?: mongoose.ClientSession
 	) {
@@ -37,7 +37,7 @@ export class CartHandler {
 				cart = new Cart({
 					userId,
 					items: [],
-					currency: CART_CONSTANTS.CURRENCY,
+					currency: CURRENCY_CONSTANTS.CURRENCY,
 				});
 				if (session) {
 					await cart.save({ session });
@@ -58,7 +58,7 @@ export class CartHandler {
 	}
 
 	// Helper method to generate status summary
-	private generateStatusSummary(cart: any) {
+	private static generateStatusSummary(cart: any) {
 		const statusCounts = cart.items.reduce(
 			(acc: Record<string, number>, item: ICartItem) => {
 				acc[item.status] = (acc[item.status] || 0) + 1;
@@ -90,11 +90,11 @@ export class CartHandler {
 			const userId = request.user!.userId;
 			Logger.debug(`Retrieving cart for user ${userId}`, "CartHandler");
 
-			const cart = await this.getOrCreateCart(userId);
+			const cart = await CartHandler.getOrCreateCart(userId);
 			await cart.updatePrices(); // Ensure prices are up to date
 
 			// Generate status summary and get problematic items
-			const statusSummary = this.generateStatusSummary(cart);
+			const statusSummary = CartHandler.generateStatusSummary(cart);
 			const response: any = {
 				cart,
 				statusSummary,
@@ -143,7 +143,7 @@ export class CartHandler {
 			);
 
 			// Get or create cart first to get current version
-			const cart = await this.getOrCreateCart(userId, session);
+			const cart = await CartHandler.getOrCreateCart(userId, session);
 
 			// If client provided version, validate it
 			if (version !== undefined && version !== cart.version) {
@@ -252,7 +252,7 @@ export class CartHandler {
 
 						// Generate status summary for response
 						const statusSummary =
-							this.generateStatusSummary(lockedCart);
+							CartHandler.generateStatusSummary(lockedCart);
 						const response: any = {
 							cart: lockedCart,
 							addedItem:
@@ -431,7 +431,7 @@ export class CartHandler {
 
 						// Generate status summary for response
 						const statusSummary =
-							this.generateStatusSummary(lockedCart);
+							CartHandler.generateStatusSummary(lockedCart);
 						const response: any = {
 							cart: lockedCart,
 							updatedItem: cartItem,
@@ -556,7 +556,7 @@ export class CartHandler {
 
 						// Generate response before save
 						const statusSummary =
-							this.generateStatusSummary(lockedCart);
+							CartHandler.generateStatusSummary(lockedCart);
 						const response: any = {
 							cart: lockedCart,
 							removedItem,
@@ -653,7 +653,7 @@ export class CartHandler {
 					async (lockedCart) => {
 						// Store status summary before clearing
 						const previousStatus =
-							this.generateStatusSummary(lockedCart);
+							CartHandler.generateStatusSummary(lockedCart);
 
 						// Store items by status before clearing
 						const clearedItems = {

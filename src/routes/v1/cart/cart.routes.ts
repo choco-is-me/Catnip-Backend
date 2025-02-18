@@ -5,6 +5,7 @@ import {
 	AddToCartBody,
 	AddToCartResponse,
 	CartItemParams,
+	CartOperationBody,
 	ClearCartResponse,
 	GetCartResponse,
 	RemoveFromCartResponse,
@@ -140,6 +141,7 @@ export default async function cartRoutes(fastify: FastifyInstance) {
 	// Remove item from cart
 	fastify.delete<{
 		Params: Static<typeof CartItemParams>;
+		Body: Static<typeof CartOperationBody>; // Add this line
 	}>(
 		"/items/:itemId/:variantSku",
 		{
@@ -148,6 +150,7 @@ export default async function cartRoutes(fastify: FastifyInstance) {
 				description: "Remove an item from the cart",
 				summary: "Remove from cart",
 				params: CartItemParams,
+				body: CartOperationBody, // Add this line
 				response: {
 					200: RemoveFromCartResponse,
 					401: ErrorResponseSchema,
@@ -172,13 +175,16 @@ export default async function cartRoutes(fastify: FastifyInstance) {
 	);
 
 	// Clear cart
-	fastify.delete(
+	fastify.delete<{
+		Body: Static<typeof CartOperationBody>; // Add this line
+	}>(
 		"/",
 		{
 			schema: {
 				tags: ["Cart"],
 				description: "Remove all items from the cart",
 				summary: "Clear cart",
+				body: CartOperationBody, // Add this line
 				response: {
 					200: ClearCartResponse,
 					401: ErrorResponseSchema,
