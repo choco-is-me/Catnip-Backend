@@ -2,7 +2,11 @@
 import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose, { Types } from "mongoose";
-import { CURRENCY_CONSTANTS } from "../../../../constants/currency.constants";
+import {
+	CURRENCY_CONSTANTS,
+	validateVNDPrice,
+	validateVNDValue,
+} from "../../../../constants/currency.constants";
 import { Cart, ICartItem } from "../../../../models/Cart";
 import { Item } from "../../../../models/Item";
 import {
@@ -219,6 +223,18 @@ export class CartHandler {
 						} else {
 							// Calculate effective price considering discounts
 							const basePrice = Math.round(variant.price);
+							if (!validateVNDValue(basePrice)) {
+								Logger.error(
+									new Error(
+										`Invalid base price calculated: ${basePrice}`
+									),
+									"CartHandler"
+								);
+								throw createBusinessError(
+									CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE
+								);
+							}
+
 							let effectivePrice = basePrice;
 
 							if (item.discount?.active) {
@@ -227,10 +243,44 @@ export class CartHandler {
 									now >= item.discount.startDate &&
 									now <= item.discount.endDate
 								) {
-									effectivePrice = Math.round(
+									const calculatedPrice = Math.round(
 										basePrice *
 											(1 - item.discount.percentage / 100)
 									);
+
+									// Validate the calculated price is a valid VND amount
+									if (!validateVNDValue(calculatedPrice)) {
+										Logger.error(
+											new Error(
+												`Invalid discounted price calculated: ${calculatedPrice}`
+											),
+											"CartHandler"
+										);
+										throw createBusinessError(
+											CURRENCY_CONSTANTS.ERRORS
+												.INVALID_DISCOUNT
+										);
+									}
+
+									// Additional validation against price range
+									if (!validateVNDPrice(calculatedPrice)) {
+										Logger.error(
+											new Error(
+												`Discounted price ${calculatedPrice} is outside valid range`
+											),
+											"CartHandler"
+										);
+										throw createBusinessError(
+											CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+												CURRENCY_CONSTANTS.ITEM
+													.MIN_PRICE,
+												CURRENCY_CONSTANTS.ITEM
+													.MAX_PRICE
+											)
+										);
+									}
+
+									effectivePrice = calculatedPrice;
 								}
 							}
 
@@ -405,6 +455,18 @@ export class CartHandler {
 						// Update prices if item is active
 						if (cartItem.status === "active") {
 							const basePrice = Math.round(variant.price);
+							if (!validateVNDValue(basePrice)) {
+								Logger.error(
+									new Error(
+										`Invalid base price calculated: ${basePrice}`
+									),
+									"CartHandler"
+								);
+								throw createBusinessError(
+									CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE
+								);
+							}
+
 							cartItem.currentPrice = basePrice;
 
 							// Apply discounts if available and valid
@@ -414,10 +476,44 @@ export class CartHandler {
 									now >= item.discount.startDate &&
 									now <= item.discount.endDate
 								) {
-									cartItem.effectivePrice = Math.round(
+									const calculatedPrice = Math.round(
 										basePrice *
 											(1 - item.discount.percentage / 100)
 									);
+
+									// Validate the calculated price is a valid VND amount
+									if (!validateVNDValue(calculatedPrice)) {
+										Logger.error(
+											new Error(
+												`Invalid discounted price calculated: ${calculatedPrice}`
+											),
+											"CartHandler"
+										);
+										throw createBusinessError(
+											CURRENCY_CONSTANTS.ERRORS
+												.INVALID_DISCOUNT
+										);
+									}
+
+									// Additional validation against price range
+									if (!validateVNDPrice(calculatedPrice)) {
+										Logger.error(
+											new Error(
+												`Discounted price ${calculatedPrice} is outside valid range`
+											),
+											"CartHandler"
+										);
+										throw createBusinessError(
+											CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+												CURRENCY_CONSTANTS.ITEM
+													.MIN_PRICE,
+												CURRENCY_CONSTANTS.ITEM
+													.MAX_PRICE
+											)
+										);
+									}
+
+									cartItem.effectivePrice = calculatedPrice;
 								} else {
 									cartItem.effectivePrice = basePrice;
 								}

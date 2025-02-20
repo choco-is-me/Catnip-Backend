@@ -2,7 +2,7 @@
 import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
-import { IItem, Item } from "../../../../models/Item";
+import { IItem, Item, IVariant } from "../../../../models/Item";
 import { Supplier } from "../../../../models/Supplier";
 import { BulkCreateItemBody } from "../../../../schemas/items";
 import { Logger } from "../../../../services/logger.service";
@@ -12,6 +12,11 @@ import {
 } from "../../../../utils/error-handler";
 import { withTransaction } from "../../../../utils/transaction.utils";
 import { ItemSortField } from "../../../../schemas/items";
+import {
+	CURRENCY_CONSTANTS,
+	formatVNDPrice,
+	validateVNDPrice,
+} from "../../../../constants/currency.constants";
 
 export class ItemHandler {
 	// Validation methods as static
@@ -73,6 +78,36 @@ export class ItemHandler {
 		}
 	}
 
+	private static validateItemPrices(item: Partial<IItem>): void {
+		// Validate base price
+		if (item.basePrice !== undefined && !validateVNDPrice(item.basePrice)) {
+			throw createBusinessError(
+				`Base price (${formatVNDPrice(
+					item.basePrice
+				)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+					CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+					CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+				)}`
+			);
+		}
+
+		// Validate variant prices
+		if (item.variants) {
+			item.variants.forEach((variant, index) => {
+				if (!validateVNDPrice(variant.price)) {
+					throw createBusinessError(
+						`Price for variant ${variant.sku} (${formatVNDPrice(
+							variant.price
+						)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+							CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+							CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+						)}`
+					);
+				}
+			});
+		}
+	}
+
 	private static validateDiscount(discount?: {
 		active?: boolean;
 		percentage: number;
@@ -105,6 +140,37 @@ export class ItemHandler {
 		}
 	}
 
+	private static validateDiscountedPrices(
+		basePrice: number,
+		variants: IVariant[],
+		discountPercentage: number
+	): void {
+		// Validate that discounted prices will still be valid VND amounts
+		const validateDiscountedPrice = (originalPrice: number) => {
+			const discountedPrice = Math.round(
+				originalPrice * (1 - discountPercentage / 100)
+			);
+			if (!validateVNDPrice(discountedPrice)) {
+				throw createBusinessError(
+					`Discounted price (${formatVNDPrice(
+						discountedPrice
+					)}) would be invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+						CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+						CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+					)}`
+				);
+			}
+		};
+
+		// Check base price
+		validateDiscountedPrice(basePrice);
+
+		// Check all variant prices
+		variants.forEach((variant) => {
+			validateDiscountedPrice(variant.price);
+		});
+	}
+
 	async createItemsBulk(
 		request: FastifyRequest<{ Body: Static<typeof BulkCreateItemBody> }>,
 		reply: FastifyReply
@@ -134,14 +200,47 @@ export class ItemHandler {
 				// Sequential validation to prevent transaction issues
 				const preparedItems = [];
 				for (const itemData of items) {
-					// Validate each item sequentially
+					// Validate prices before other validations
+					ItemHandler.validateItemPrices({
+						...itemData,
+						supplier: new mongoose.Types.ObjectId(
+							itemData.supplier
+						),
+						discount: itemData.discount
+							? {
+									...itemData.discount,
+									startDate: new Date(
+										itemData.discount.startDate
+									),
+									endDate: new Date(
+										itemData.discount.endDate
+									),
+							  }
+							: undefined,
+					});
+
+					// Validate supplier
 					await ItemHandler.validateSupplier(
 						itemData.supplier?.toString(),
 						session
 					);
 
 					ItemHandler.validateVariants(itemData.variants, allSkus);
-					ItemHandler.validateDiscount(itemData.discount);
+
+					// Validate discount if present
+					if (itemData.discount) {
+						// First validate discount structure and dates
+						ItemHandler.validateDiscount(itemData.discount);
+
+						// Then validate the resulting prices if discount is active
+						if (itemData.discount.active) {
+							ItemHandler.validateDiscountedPrices(
+								itemData.basePrice,
+								itemData.variants,
+								itemData.discount.percentage
+							);
+						}
+					}
 
 					preparedItems.push({
 						...itemData,
@@ -246,6 +345,12 @@ export class ItemHandler {
 				throw CommonErrors.invalidFormat("item ID");
 			}
 
+			// Get current item data for complete validation
+			const currentItem = await Item.findById(itemId).session(session);
+			if (!currentItem) {
+				throw CommonErrors.itemNotFound();
+			}
+
 			// Check supplier if it's being updated
 			if (updateData.supplier) {
 				const supplier = await Supplier.findById(
@@ -259,9 +364,21 @@ export class ItemHandler {
 				}
 			}
 
+			// Merge current and update data for validation
+			const itemToValidate = {
+				...currentItem.toObject(),
+				...updateData,
+				variants: updateData.variants || currentItem.variants,
+			};
+
+			// Validate prices if they're being updated
+			if (updateData.basePrice !== undefined || updateData.variants) {
+				ItemHandler.validateItemPrices(itemToValidate);
+			}
+
 			// Validate variants if being updated
 			if (updateData.variants) {
-				const skus = new Set();
+				const skus = new Set<string>();
 				for (const variant of updateData.variants) {
 					if (skus.has(variant.sku)) {
 						throw createBusinessError(
@@ -274,20 +391,15 @@ export class ItemHandler {
 
 			// Validate discount if being updated
 			if (updateData.discount) {
-				const now = new Date();
-				if (
-					updateData.discount.startDate >= updateData.discount.endDate
-				) {
-					throw createBusinessError(
-						"Discount end date must be after start date"
-					);
-				}
-				if (
-					updateData.discount.startDate < now &&
-					updateData.discount.active
-				) {
-					throw createBusinessError(
-						"Cannot update an active discount"
+				// First validate discount structure and dates
+				ItemHandler.validateDiscount(updateData.discount);
+
+				// Validate the resulting prices if discount is or will be active
+				if (updateData.discount.active) {
+					ItemHandler.validateDiscountedPrices(
+						itemToValidate.basePrice,
+						itemToValidate.variants,
+						updateData.discount.percentage
 					);
 				}
 			}

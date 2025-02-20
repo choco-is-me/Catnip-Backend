@@ -1,6 +1,7 @@
 // src/schemas/items/index.ts
 import { Type } from "@sinclair/typebox";
 import { ResponseWrapper, Timestamps } from "../common";
+import { CURRENCY_CONSTANTS } from "../../constants/currency.constants";
 
 // Constants
 const MAX_BULK_ITEMS = 20;
@@ -35,9 +36,10 @@ export const VariantSchema = Type.Object(
 		}),
 		specifications: ItemSpecificationSchema,
 		price: Type.Number({
-			minimum: 0,
-			description: "Price for this specific variant",
-			examples: [29.99],
+			minimum: CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+			maximum: CURRENCY_CONSTANTS.ITEM.MAX_PRICE,
+			description: "Price in VND (integer)",
+			examples: [249000], // 249,000 VND
 		}),
 		stockQuantity: Type.Number({
 			minimum: 0,
@@ -53,7 +55,7 @@ export const VariantSchema = Type.Object(
 		),
 	},
 	{
-		description: "Product variant details",
+		description: "Product variant details with VND pricing",
 	}
 );
 
@@ -112,7 +114,7 @@ export const DiscountSchema = Type.Object(
 		}),
 	},
 	{
-		description: "Discount information",
+		description: "Discount information for VND prices",
 	}
 );
 
@@ -129,9 +131,10 @@ const ItemBaseSchema = Type.Object({
 		examples: ["High-quality cotton t-shirt with premium finish"],
 	}),
 	basePrice: Type.Number({
-		minimum: 0,
-		description: "Base price before any variants or discounts",
-		examples: [24.99],
+		minimum: CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+		maximum: CURRENCY_CONSTANTS.ITEM.MAX_PRICE,
+		description: "Base price in VND (integer)",
+		examples: [199000], // 199,000 VND
 	}),
 	images: Type.Array(
 		Type.String({
@@ -228,7 +231,7 @@ export const BulkCreateItemResponse = ResponseWrapper(
 							name: "Premium Cotton T-Shirt",
 							description:
 								"High-quality cotton t-shirt with premium finish",
-							basePrice: 24.99,
+							basePrice: 199000,
 							images: ["https://example.com/images/tshirt-1.jpg"],
 							tags: ["clothing", "t-shirt", "premium"],
 							variants: [
@@ -239,7 +242,7 @@ export const BulkCreateItemResponse = ResponseWrapper(
 										color: "Blue",
 										material: "Cotton",
 									},
-									price: 29.99,
+									price: 249000,
 									stockQuantity: 100,
 								},
 							],
@@ -328,14 +331,14 @@ export const ItemQueryParams = Type.Object({
 		Type.Number({
 			minimum: 0,
 			description: "Minimum price filter",
-			examples: [10, 20, 50],
+			examples: [100000],
 		})
 	),
 	maxPrice: Type.Optional(
 		Type.Number({
 			minimum: 0,
 			description: "Maximum price filter",
-			examples: [100, 200, 500],
+			examples: [500000],
 		})
 	),
 	status: Type.Optional(

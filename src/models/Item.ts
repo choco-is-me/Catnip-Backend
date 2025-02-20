@@ -4,6 +4,7 @@ import { Logger } from "../services/logger.service";
 import {
 	CURRENCY_CONSTANTS,
 	validateVNDPrice,
+	formatVNDPrice,
 } from "../constants/currency.constants";
 
 // Interface for dynamic specifications
@@ -74,6 +75,9 @@ const VariantSchema = new Schema(
 					return validateVNDPrice(value);
 				},
 				message: function (props: { value: number }): string {
+					if (!Number.isInteger(props.value)) {
+						return CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
+					}
 					return props.value < CURRENCY_CONSTANTS.ITEM.MIN_PRICE ||
 						props.value > CURRENCY_CONSTANTS.ITEM.MAX_PRICE
 						? CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
@@ -82,6 +86,13 @@ const VariantSchema = new Schema(
 						  )
 						: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
 				},
+			},
+			get: function (price: number) {
+				return price;
+			},
+			set: function (price: number) {
+				// Ensure integer values for VND
+				return Math.round(price);
 			},
 		},
 		stockQuantity: {
@@ -157,6 +168,9 @@ const ItemSchema = new Schema<IItem>(
 					return validateVNDPrice(value);
 				},
 				message: function (props: { value: number }): string {
+					if (!Number.isInteger(props.value)) {
+						return CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
+					}
 					return props.value < CURRENCY_CONSTANTS.ITEM.MIN_PRICE ||
 						props.value > CURRENCY_CONSTANTS.ITEM.MAX_PRICE
 						? CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
@@ -165,6 +179,13 @@ const ItemSchema = new Schema<IItem>(
 						  )
 						: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
 				},
+			},
+			get: function (price: number) {
+				return price;
+			},
+			set: function (price: number) {
+				// Ensure integer values for VND
+				return Math.round(price);
 			},
 		},
 		priceHistory: [PriceHistorySchema],
@@ -250,24 +271,6 @@ ItemSchema.index({
 	"discount.endDate": 1,
 });
 
-// Pre-save middleware to update price history
-ItemSchema.pre("save", function (next) {
-	if (this.isModified("basePrice")) {
-		this.priceHistory.push({
-			price: this.basePrice,
-			date: new Date(),
-		});
-
-		// Keep only last 365 days of price history
-		const oneYearAgo = new Date();
-		oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-		this.priceHistory = this.priceHistory.filter(
-			(ph) => ph.date >= oneYearAgo
-		);
-	}
-	next();
-});
-
 // Method to check stock status of a variant
 ItemSchema.methods.getStockStatus = function (
 	variantSku: string
@@ -299,6 +302,70 @@ ItemSchema.methods.getCurrentPrice = function (variantSku?: string): number {
 	}
 	return basePrice;
 };
+
+// Add methods for price validation
+ItemSchema.methods.validateVariantPrices = function (): boolean {
+	return this.variants.every((variant: IVariant) =>
+		validateVNDPrice(variant.price)
+	);
+};
+
+ItemSchema.methods.formatPrice = function (price: number): string {
+	return formatVNDPrice(price);
+};
+
+// Add middleware to validate all prices before save
+ItemSchema.pre("save", function (next) {
+	try {
+		// Validate base price
+		if (!validateVNDPrice(this.basePrice)) {
+			throw new Error(
+				`Base price ${formatVNDPrice(
+					this.basePrice
+				)} is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+					CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+					CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+				)}`
+			);
+		}
+
+		// Validate all variant prices
+		this.variants.forEach((variant: IVariant, index: number) => {
+			if (!validateVNDPrice(variant.price)) {
+				throw new Error(
+					`Price for variant ${variant.sku} (${formatVNDPrice(
+						variant.price
+					)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+						CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+						CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+					)}`
+				);
+			}
+		});
+
+		next();
+	} catch (error) {
+		next(error as Error);
+	}
+});
+
+// Pre-save middleware to update price history
+ItemSchema.pre("save", function (next) {
+	if (this.isModified("basePrice")) {
+		this.priceHistory.push({
+			price: this.basePrice,
+			date: new Date(),
+		});
+
+		// Keep only last 365 days of price history
+		const oneYearAgo = new Date();
+		oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+		this.priceHistory = this.priceHistory.filter(
+			(ph) => ph.date >= oneYearAgo
+		);
+	}
+	next();
+});
 
 export const Item = mongoose.model<IItem>("Item", ItemSchema);
 

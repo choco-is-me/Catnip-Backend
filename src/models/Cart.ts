@@ -2,6 +2,7 @@
 import mongoose, { Document, Schema } from "mongoose";
 import {
 	CURRENCY_CONSTANTS,
+	validateVNDPrice,
 	validateVNDValue,
 } from "../constants/currency.constants";
 import { Logger } from "../services/logger.service";
@@ -358,9 +359,40 @@ CartSchema.methods.updatePrices = async function (): Promise<void> {
 					now >= dbItem.discount.startDate &&
 					now <= dbItem.discount.endDate
 				) {
-					effectivePrice = Math.round(
+					const calculatedPrice = Math.round(
 						basePrice * (1 - dbItem.discount.percentage / 100)
 					);
+
+					// Validate the calculated price is a valid VND amount
+					if (!validateVNDValue(calculatedPrice)) {
+						Logger.error(
+							new Error(
+								`Invalid discounted price calculated: ${calculatedPrice}`
+							),
+							"CartModel"
+						);
+						throw new Error(
+							CURRENCY_CONSTANTS.ERRORS.INVALID_DISCOUNT
+						);
+					}
+
+					// Additional validation against price range
+					if (!validateVNDPrice(calculatedPrice)) {
+						Logger.error(
+							new Error(
+								`Discounted price ${calculatedPrice} is outside valid range`
+							),
+							"CartModel"
+						);
+						throw new Error(
+							CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+								CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+								CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+							)
+						);
+					}
+
+					effectivePrice = calculatedPrice;
 				}
 			}
 
