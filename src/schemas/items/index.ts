@@ -130,12 +130,6 @@ const ItemBaseSchema = Type.Object({
 		description: "Item description",
 		examples: ["High-quality cotton t-shirt with premium finish"],
 	}),
-	basePrice: Type.Number({
-		minimum: CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
-		maximum: CURRENCY_CONSTANTS.ITEM.MAX_PRICE,
-		description: "Base price in VND (integer)",
-		examples: [199000], // 199,000 VND
-	}),
 	images: Type.Array(
 		Type.String({
 			format: "uri",
@@ -181,6 +175,11 @@ export const ItemSchema = Type.Intersect(
 			_id: Type.String({
 				pattern: "^[0-9a-fA-F]{24}$",
 				description: "MongoDB ObjectId",
+			}),
+			effectivePrice: Type.Number({
+				description:
+					"Current effective price (lowest active variant price with discount if applicable)",
+				examples: [239000], // Example: 239,000 VND
 			}),
 		}),
 		ItemBaseSchema,
@@ -231,7 +230,6 @@ export const BulkCreateItemResponse = ResponseWrapper(
 							name: "Premium Cotton T-Shirt",
 							description:
 								"High-quality cotton t-shirt with premium finish",
-							basePrice: 199000,
 							images: ["https://example.com/images/tshirt-1.jpg"],
 							tags: ["clothing", "t-shirt", "premium"],
 							variants: [
@@ -330,15 +328,17 @@ export const ItemQueryParams = Type.Object({
 	minPrice: Type.Optional(
 		Type.Number({
 			minimum: 0,
-			description: "Minimum price filter",
-			examples: [100000],
+			description:
+				"Minimum effective price filter. Filters items based on their lowest active variant price, considering any active discounts.",
+			examples: [100000], // 100,000 VND
 		})
 	),
 	maxPrice: Type.Optional(
 		Type.Number({
 			minimum: 0,
-			description: "Maximum price filter",
-			examples: [500000],
+			description:
+				"Maximum effective price filter. Filters items based on their lowest active variant price, considering any active discounts.",
+			examples: [500000], // 500,000 VND
 		})
 	),
 	status: Type.Optional(
@@ -384,13 +384,12 @@ export const ItemQueryParams = Type.Object({
 				Type.Literal("createdAt"),
 			],
 			{
-				description: "Field to sort the results by",
-				examples: [
-					"effectivePrice",
-					"ratings.average",
-					"numberOfSales",
-					"createdAt",
-				],
+				description: `Field to sort items by:
+			  - effectivePrice: Sort by lowest active variant price (with discounts)
+			  - ratings.average: Sort by average rating
+			  - numberOfSales: Sort by total sales
+			  - createdAt: Sort by creation date`,
+				examples: ["effectivePrice"],
 			}
 		)
 	),

@@ -17,6 +17,7 @@ import {
 	formatVNDPrice,
 	validateVNDPrice,
 } from "../../../../constants/currency.constants";
+import { Cart } from "../../../../models/Cart";
 
 export class ItemHandler {
 	// Validation methods as static
@@ -64,6 +65,18 @@ export class ItemHandler {
 			itemSkus.add(variant.sku);
 			existingSkus.add(variant.sku);
 
+			// Validate price
+			if (!validateVNDPrice(variant.price)) {
+				throw createBusinessError(
+					`Price for variant ${variant.sku} (${formatVNDPrice(
+						variant.price
+					)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+						CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+						CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+					)}`
+				);
+			}
+
 			if (variant.price < 0) {
 				throw createBusinessError(
 					`Invalid price for SKU ${variant.sku}: price cannot be negative`
@@ -79,21 +92,9 @@ export class ItemHandler {
 	}
 
 	private static validateItemPrices(item: Partial<IItem>): void {
-		// Validate base price
-		if (item.basePrice !== undefined && !validateVNDPrice(item.basePrice)) {
-			throw createBusinessError(
-				`Base price (${formatVNDPrice(
-					item.basePrice
-				)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
-					CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
-					CURRENCY_CONSTANTS.ITEM.MAX_PRICE
-				)}`
-			);
-		}
-
-		// Validate variant prices
+		// Only validate variant prices
 		if (item.variants) {
-			item.variants.forEach((variant, index) => {
+			item.variants.forEach((variant) => {
 				if (!validateVNDPrice(variant.price)) {
 					throw createBusinessError(
 						`Price for variant ${variant.sku} (${formatVNDPrice(
@@ -141,18 +142,19 @@ export class ItemHandler {
 	}
 
 	private static validateDiscountedPrices(
-		basePrice: number,
 		variants: IVariant[],
 		discountPercentage: number
 	): void {
 		// Validate that discounted prices will still be valid VND amounts
-		const validateDiscountedPrice = (originalPrice: number) => {
+		variants.forEach((variant) => {
 			const discountedPrice = Math.round(
-				originalPrice * (1 - discountPercentage / 100)
+				variant.price * (1 - discountPercentage / 100)
 			);
 			if (!validateVNDPrice(discountedPrice)) {
 				throw createBusinessError(
-					`Discounted price (${formatVNDPrice(
+					`Discounted price for variant ${
+						variant.sku
+					} (${formatVNDPrice(
 						discountedPrice
 					)}) would be invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
 						CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
@@ -160,14 +162,6 @@ export class ItemHandler {
 					)}`
 				);
 			}
-		};
-
-		// Check base price
-		validateDiscountedPrice(basePrice);
-
-		// Check all variant prices
-		variants.forEach((variant) => {
-			validateDiscountedPrice(variant.price);
 		});
 	}
 
@@ -200,7 +194,7 @@ export class ItemHandler {
 				// Sequential validation to prevent transaction issues
 				const preparedItems = [];
 				for (const itemData of items) {
-					// Validate prices before other validations
+					// Validate prices and variants first
 					ItemHandler.validateItemPrices({
 						...itemData,
 						supplier: new mongoose.Types.ObjectId(
@@ -235,7 +229,6 @@ export class ItemHandler {
 						// Then validate the resulting prices if discount is active
 						if (itemData.discount.active) {
 							ItemHandler.validateDiscountedPrices(
-								itemData.basePrice,
 								itemData.variants,
 								itemData.discount.percentage
 							);
@@ -371,11 +364,6 @@ export class ItemHandler {
 				variants: updateData.variants || currentItem.variants,
 			};
 
-			// Validate prices if they're being updated
-			if (updateData.basePrice !== undefined || updateData.variants) {
-				ItemHandler.validateItemPrices(itemToValidate);
-			}
-
 			// Validate variants if being updated
 			if (updateData.variants) {
 				const skus = new Set<string>();
@@ -386,6 +374,18 @@ export class ItemHandler {
 						);
 					}
 					skus.add(variant.sku);
+
+					// Validate variant price
+					if (!validateVNDPrice(variant.price)) {
+						throw createBusinessError(
+							`Price for variant ${variant.sku} (${formatVNDPrice(
+								variant.price
+							)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
+								CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
+								CURRENCY_CONSTANTS.ITEM.MAX_PRICE
+							)}`
+						);
+					}
 				}
 			}
 
@@ -397,13 +397,13 @@ export class ItemHandler {
 				// Validate the resulting prices if discount is or will be active
 				if (updateData.discount.active) {
 					ItemHandler.validateDiscountedPrices(
-						itemToValidate.basePrice,
 						itemToValidate.variants,
 						updateData.discount.percentage
 					);
 				}
 			}
 
+			// Update the item
 			const item = await Item.findByIdAndUpdate(
 				itemId,
 				{ $set: updateData },
@@ -412,6 +412,22 @@ export class ItemHandler {
 
 			if (!item) {
 				throw CommonErrors.itemNotFound();
+			}
+
+			// Check if we need to update carts that have this item
+			if (
+				updateData.variants ||
+				updateData.discount ||
+				updateData.status === "discontinued"
+			) {
+				await Cart.updateMany(
+					{ "items.itemId": itemId },
+					{ $set: { "items.$[item].status": "needsUpdate" } },
+					{
+						arrayFilters: [{ "item.itemId": itemId }],
+						session,
+					}
+				);
 			}
 
 			Logger.info(`Item updated successfully: ${itemId}`, "ItemHandler");
@@ -468,6 +484,7 @@ export class ItemHandler {
 	}
 
 	// List items with filtering, sorting and pagination (Including search)
+	// Inside ItemHandler class
 	async listItems(
 		request: FastifyRequest<{
 			Querystring: {
@@ -533,6 +550,93 @@ export class ItemHandler {
 				);
 			}
 
+			// Add price calculation stages
+			pipeline.push(
+				// Get active variants
+				{
+					$addFields: {
+						activeVariants: {
+							$filter: {
+								input: "$variants",
+								as: "variant",
+								cond: { $gt: ["$$variant.stockQuantity", 0] },
+							},
+						},
+					},
+				},
+
+				// Calculate lowest price from active variants
+				{
+					$addFields: {
+						lowestPrice: {
+							$min: {
+								$cond: [
+									{ $gt: [{ $size: "$activeVariants" }, 0] },
+									"$activeVariants.price",
+									Number.MAX_SAFE_INTEGER,
+								],
+							},
+						},
+					},
+				},
+
+				// Calculate effective price with discounts
+				{
+					$addFields: {
+						effectivePrice: {
+							$cond: {
+								if: {
+									$and: [
+										{ $eq: ["$discount.active", true] },
+										{
+											$gt: [
+												{ $size: "$activeVariants" },
+												0,
+											],
+										},
+										{
+											$lt: [
+												"$discount.startDate",
+												"$$NOW",
+											],
+										},
+										{ $gt: ["$discount.endDate", "$$NOW"] },
+									],
+								},
+								then: {
+									$round: [
+										{
+											$multiply: [
+												"$lowestPrice",
+												{
+													$subtract: [
+														1,
+														{
+															$divide: [
+																"$discount.percentage",
+																100,
+															],
+														},
+													],
+												},
+											],
+										},
+									],
+								},
+								else: "$lowestPrice",
+							},
+						},
+					},
+				},
+
+				// Remove items with no active variants
+				{
+					$match: {
+						lowestPrice: { $ne: Number.MAX_SAFE_INTEGER },
+					},
+				}
+			);
+
 			// Add other filters
 			const filters: mongoose.FilterQuery<IItem> = {};
 
@@ -549,15 +653,20 @@ export class ItemHandler {
 				}
 			}
 
-			// Price range filter with validation
+			// Price range filter
 			if (minPrice !== undefined || maxPrice !== undefined) {
-				filters.basePrice = {};
-				if (minPrice !== undefined && minPrice >= 0) {
-					filters.basePrice.$gte = minPrice;
-				}
-				if (maxPrice !== undefined && maxPrice >= 0) {
-					filters.basePrice.$lte = maxPrice;
-				}
+				pipeline.push({
+					$match: {
+						effectivePrice: {
+							...(minPrice !== undefined
+								? { $gte: minPrice }
+								: {}),
+							...(maxPrice !== undefined
+								? { $lte: maxPrice }
+								: {}),
+						},
+					},
+				});
 			}
 
 			// Status filter
@@ -591,40 +700,6 @@ export class ItemHandler {
 			if (Object.keys(filters).length > 0) {
 				pipeline.push({ $match: filters });
 			}
-
-			// Add effective price calculation
-			pipeline.push({
-				$addFields: {
-					effectivePrice: {
-						$cond: {
-							if: {
-								$and: [
-									{ $eq: ["$discount.active", true] },
-									{ $gt: ["$discount.percentage", 0] },
-									{ $lt: ["$discount.percentage", 100] },
-								],
-							},
-							then: {
-								$multiply: [
-									"$basePrice",
-									{
-										$subtract: [
-											1,
-											{
-												$divide: [
-													"$discount.percentage",
-													100,
-												],
-											},
-										],
-									},
-								],
-							},
-							else: "$basePrice",
-						},
-					},
-				},
-			});
 
 			// Add sorting
 			const sortStage: { $sort: Record<string, 1 | -1> } = {
@@ -678,7 +753,13 @@ export class ItemHandler {
 			return reply.send({
 				success: true,
 				data: {
-					items,
+					items: items.map((item) => ({
+						...item,
+						effectivePrice: item.effectivePrice,
+						// Remove internal fields used for calculation
+						activeVariants: undefined,
+						lowestPrice: undefined,
+					})),
 					pagination: {
 						total: totalDocs,
 						page: validatedPage,

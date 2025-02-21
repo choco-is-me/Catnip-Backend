@@ -21,12 +21,6 @@ export interface IVariant {
 	lowStockThreshold?: number;
 }
 
-// Interface for price history with retention
-export interface IPriceHistory {
-	price: number;
-	date: Date;
-}
-
 // Interface for discount with validation
 export interface IDiscount {
 	percentage: number;
@@ -39,8 +33,6 @@ export interface IDiscount {
 export interface IItem extends Document {
 	name: string;
 	description: string;
-	basePrice: number;
-	priceHistory: IPriceHistory[];
 	images: string[];
 	tags: string[];
 	variants: IVariant[];
@@ -109,20 +101,6 @@ const VariantSchema = new Schema(
 	{ _id: false }
 );
 
-const PriceHistorySchema = new Schema(
-	{
-		price: {
-			type: Number,
-			required: true,
-		},
-		date: {
-			type: Date,
-			default: Date.now,
-		},
-	},
-	{ _id: false }
-);
-
 const DiscountSchema = new Schema(
 	{
 		percentage: {
@@ -160,35 +138,6 @@ const ItemSchema = new Schema<IItem>(
 			required: true,
 			trim: true,
 		},
-		basePrice: {
-			type: Number,
-			required: true,
-			validate: {
-				validator: function (value: number): boolean {
-					return validateVNDPrice(value);
-				},
-				message: function (props: { value: number }): string {
-					if (!Number.isInteger(props.value)) {
-						return CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
-					}
-					return props.value < CURRENCY_CONSTANTS.ITEM.MIN_PRICE ||
-						props.value > CURRENCY_CONSTANTS.ITEM.MAX_PRICE
-						? CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
-								CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
-								CURRENCY_CONSTANTS.ITEM.MAX_PRICE
-						  )
-						: CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE;
-				},
-			},
-			get: function (price: number) {
-				return price;
-			},
-			set: function (price: number) {
-				// Ensure integer values for VND
-				return Math.round(price);
-			},
-		},
-		priceHistory: [PriceHistorySchema],
 		images: [
 			{
 				type: String,
@@ -263,7 +212,6 @@ ItemSchema.index(
 ItemSchema.index({ "variants.sku": 1 });
 ItemSchema.index({ "ratings.average": -1 });
 ItemSchema.index({ numberOfSales: -1 });
-ItemSchema.index({ basePrice: 1 });
 ItemSchema.index({ status: 1 });
 ItemSchema.index({
 	"discount.active": 1,
@@ -289,18 +237,20 @@ ItemSchema.methods.getStockStatus = function (
 
 // Method to get current price (considering discounts)
 ItemSchema.methods.getCurrentPrice = function (variantSku?: string): number {
-	let basePrice = variantSku
+	let currentPrice = variantSku
 		? this.variants.find((v: IVariant) => v.sku === variantSku)?.price ||
-		  this.basePrice
-		: this.basePrice;
+		  this.currentPrice
+		: this.currentPrice;
 
 	if (this.discount?.active) {
 		const now = new Date();
 		if (now >= this.discount.startDate && now <= this.discount.endDate) {
-			return Math.round(basePrice * (1 - this.discount.percentage / 100));
+			return Math.round(
+				currentPrice * (1 - this.discount.percentage / 100)
+			);
 		}
 	}
-	return basePrice;
+	return currentPrice;
 };
 
 // Add methods for price validation
@@ -317,18 +267,6 @@ ItemSchema.methods.formatPrice = function (price: number): string {
 // Add middleware to validate all prices before save
 ItemSchema.pre("save", function (next) {
 	try {
-		// Validate base price
-		if (!validateVNDPrice(this.basePrice)) {
-			throw new Error(
-				`Base price ${formatVNDPrice(
-					this.basePrice
-				)} is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
-					CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
-					CURRENCY_CONSTANTS.ITEM.MAX_PRICE
-				)}`
-			);
-		}
-
 		// Validate all variant prices
 		this.variants.forEach((variant: IVariant, index: number) => {
 			if (!validateVNDPrice(variant.price)) {
@@ -347,24 +285,6 @@ ItemSchema.pre("save", function (next) {
 	} catch (error) {
 		next(error as Error);
 	}
-});
-
-// Pre-save middleware to update price history
-ItemSchema.pre("save", function (next) {
-	if (this.isModified("basePrice")) {
-		this.priceHistory.push({
-			price: this.basePrice,
-			date: new Date(),
-		});
-
-		// Keep only last 365 days of price history
-		const oneYearAgo = new Date();
-		oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-		this.priceHistory = this.priceHistory.filter(
-			(ph) => ph.date >= oneYearAgo
-		);
-	}
-	next();
 });
 
 export const Item = mongoose.model<IItem>("Item", ItemSchema);
