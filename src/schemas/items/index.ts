@@ -6,6 +6,13 @@ import { CURRENCY_CONSTANTS } from "../../constants/currency.constants";
 // Constants
 const MAX_BULK_ITEMS = 20;
 
+// Item sort fields
+export type ItemSortField =
+	| "effectivePrice"
+	| "ratings.average"
+	| "numberOfSales"
+	| "createdAt";
+
 // Base schemas for specifications and variants
 export const ItemSpecificationSchema = Type.Record(
 	Type.String(),
@@ -59,14 +66,6 @@ export const VariantSchema = Type.Object(
 	}
 );
 
-// Item sort fields
-export type ItemSortField =
-	| "effectivePrice"
-	| "ratings.average"
-	| "numberOfSales"
-	| "createdAt";
-
-// Rating schema
 export const RatingSchema = Type.Object(
 	{
 		average: Type.Number({
@@ -91,7 +90,6 @@ export const RatingSchema = Type.Object(
 	}
 );
 
-// Discount schema
 export const DiscountSchema = Type.Object(
 	{
 		percentage: Type.Number({
@@ -118,7 +116,6 @@ export const DiscountSchema = Type.Object(
 	}
 );
 
-// Base item fields
 const ItemBaseSchema = Type.Object({
 	name: Type.String({
 		minLength: 1,
@@ -168,18 +165,12 @@ const ItemBaseSchema = Type.Object({
 	discount: Type.Optional(DiscountSchema),
 });
 
-// Complete item schema with system fields
 export const ItemSchema = Type.Intersect(
 	[
 		Type.Object({
 			_id: Type.String({
 				pattern: "^[0-9a-fA-F]{24}$",
 				description: "MongoDB ObjectId",
-			}),
-			effectivePrice: Type.Number({
-				description:
-					"Current effective price (lowest active variant price with discount if applicable)",
-				examples: [239000], // Example: 239,000 VND
 			}),
 		}),
 		ItemBaseSchema,
@@ -190,97 +181,7 @@ export const ItemSchema = Type.Intersect(
 	}
 );
 
-// Bulk Creation Schemas
-const BulkItemValidation = Type.Intersect([
-	ItemBaseSchema,
-	Type.Object({
-		variants: Type.Array(VariantSchema, {
-			uniqueItems: true,
-			minItems: 1,
-		}),
-	}),
-]);
-
-export const BulkCreateItemBody = Type.Object({
-	items: Type.Array(BulkItemValidation, {
-		minItems: 1,
-		maxItems: MAX_BULK_ITEMS,
-		description: `Array of items to create (1-${MAX_BULK_ITEMS} items). Use this endpoint for both single and multiple item creation.`,
-	}),
-});
-
-export const BulkCreateItemResponse = ResponseWrapper(
-	Type.Object({
-		items: Type.Array(ItemSchema),
-		summary: Type.Object({
-			totalItems: Type.Number(),
-			message: Type.String(),
-		}),
-	}),
-	{
-		description:
-			"Bulk item creation response (handles both single and multiple items)",
-		examples: [
-			{
-				success: true,
-				data: {
-					items: [
-						{
-							_id: "507f1f77bcf86cd799439011",
-							name: "Premium Cotton T-Shirt",
-							description:
-								"High-quality cotton t-shirt with premium finish",
-							images: ["https://example.com/images/tshirt-1.jpg"],
-							tags: ["clothing", "t-shirt", "premium"],
-							variants: [
-								{
-									sku: "SHIRT-BLU-XL",
-									specifications: {
-										size: "XL",
-										color: "Blue",
-										material: "Cotton",
-									},
-									price: 249000,
-									stockQuantity: 100,
-								},
-							],
-							supplier: "507f1f77bcf86cd799439012",
-							ratings: {
-								average: 4.5,
-								count: 120,
-								reviewCount: 50,
-							},
-							numberOfSales: 500,
-							status: "active",
-							createdAt: "2023-01-01T00:00:00.000Z",
-							updatedAt: "2023-01-01T00:00:00.000Z",
-						},
-					],
-					summary: {
-						totalItems: 1,
-						message: "Successfully created 1 item",
-					},
-				},
-			},
-		],
-	}
-);
-
-// Request/Response schemas
-export const UpdateItemBody = Type.Partial(ItemBaseSchema);
-
-export const UpdateStockBody = Type.Object({
-	variantSku: Type.String({
-		description: "SKU of the variant to update",
-		examples: ["SHIRT-BLU-XL"],
-	}),
-	quantity: Type.Number({
-		description: "Quantity to add (positive) or remove (negative)",
-		examples: [10],
-	}),
-});
-
-// Item filters for listing
+// Item query parameters
 export const ItemQueryParams = Type.Object({
 	page: Type.Optional(
 		Type.Number({
@@ -401,6 +302,85 @@ export const ItemQueryParams = Type.Object({
 	),
 });
 
+// Request body schemas
+const BulkItemValidation = Type.Intersect([
+	ItemBaseSchema,
+	Type.Object({
+		variants: Type.Array(VariantSchema, {
+			uniqueItems: true,
+			minItems: 1,
+		}),
+	}),
+]);
+export const BulkCreateItemBody = Type.Object({
+	items: Type.Array(BulkItemValidation, {
+		minItems: 1,
+		maxItems: MAX_BULK_ITEMS,
+		description: `Array of items to create (1-${MAX_BULK_ITEMS} items). Use this endpoint for both single and multiple item creation.`,
+	}),
+});
+
+export const BulkItemUpdateBody = Type.Object({
+	items: Type.Array(
+		Type.Object({
+			itemId: Type.String({
+				pattern: "^[0-9a-fA-F]{24}$",
+				description: "MongoDB ObjectId of the item to update",
+			}),
+			// Partial update fields
+			update: Type.Optional(Type.Partial(ItemBaseSchema)),
+			// Variant updates
+			variants: Type.Optional(
+				Type.Object({
+					add: Type.Optional(Type.Array(VariantSchema)),
+					remove: Type.Optional(
+						Type.Array(
+							Type.String({ description: "SKU to remove" })
+						)
+					),
+					update: Type.Optional(
+						Type.Array(
+							Type.Object({
+								sku: Type.String(),
+								price: Type.Optional(Type.Number()),
+								stockQuantity: Type.Optional(Type.Number()),
+								specifications: Type.Optional(
+									ItemSpecificationSchema
+								),
+								lowStockThreshold: Type.Optional(Type.Number()),
+							})
+						)
+					),
+				})
+			),
+			// Discount settings
+			discount: Type.Optional(
+				Type.Object({
+					percentage: Type.Number({
+						minimum: 0,
+						maximum: 100,
+						description: "Discount percentage",
+					}),
+					startDate: Type.String({ format: "date-time" }),
+					endDate: Type.String({ format: "date-time" }),
+					active: Type.Boolean(),
+				})
+			),
+		})
+	),
+});
+
+export const UpdateStockBody = Type.Object({
+	variantSku: Type.String({
+		description: "SKU of the variant to update",
+		examples: ["SHIRT-BLU-XL"],
+	}),
+	quantity: Type.Number({
+		description: "Quantity to add (positive) or remove (negative)",
+		examples: [10],
+	}),
+});
+
 // Response schemas
 export const SingleItemResponseSchema = ResponseWrapper(
 	Type.Object({
@@ -419,6 +399,118 @@ export const PaginatedItemsResponseSchema = ResponseWrapper(
 			hasPrev: Type.Boolean(),
 		}),
 	})
+);
+
+export const BulkCreateItemResponse = ResponseWrapper(
+	Type.Object({
+		items: Type.Array(ItemSchema),
+		summary: Type.Object({
+			totalItems: Type.Number(),
+			message: Type.String(),
+		}),
+	}),
+	{
+		description:
+			"Bulk item creation response (handles both single and multiple items)",
+		examples: [
+			{
+				success: true,
+				data: {
+					items: [
+						{
+							_id: "507f1f77bcf86cd799439011",
+							name: "Premium Cotton T-Shirt",
+							description:
+								"High-quality cotton t-shirt with premium finish",
+							images: ["https://example.com/images/tshirt-1.jpg"],
+							tags: ["clothing", "t-shirt", "premium"],
+							variants: [
+								{
+									sku: "SHIRT-BLU-XL",
+									specifications: {
+										size: "XL",
+										color: "Blue",
+										material: "Cotton",
+									},
+									price: 249000,
+									stockQuantity: 100,
+								},
+							],
+							supplier: "507f1f77bcf86cd799439012",
+							ratings: {
+								average: 4.5,
+								count: 120,
+								reviewCount: 50,
+							},
+							numberOfSales: 500,
+							status: "active",
+							createdAt: "2023-01-01T00:00:00.000Z",
+							updatedAt: "2023-01-01T00:00:00.000Z",
+						},
+					],
+					summary: {
+						totalItems: 1,
+						message: "Successfully created 1 item",
+					},
+				},
+			},
+		],
+	}
+);
+
+export const BulkItemUpdateResponse = ResponseWrapper(
+	Type.Object({
+		items: Type.Array(ItemSchema),
+		summary: Type.Object({
+			total: Type.Number(),
+			updated: Type.Number(),
+			skipped: Type.Number(),
+			message: Type.String(),
+		}),
+	}),
+	{
+		description: "Bulk item update response",
+		examples: [
+			{
+				success: true,
+				data: {
+					items: [
+						{
+							_id: "507f1f77bcf86cd799439011",
+							name: "Updated Item Name",
+							description: "Updated description",
+							variants: [
+								{
+									sku: "ITEM-001",
+									specifications: {
+										size: "XL",
+										color: "Blue",
+									},
+									price: 249000,
+									stockQuantity: 100,
+								},
+							],
+							discount: {
+								percentage: 10,
+								startDate: "2024-03-01T00:00:00.000Z",
+								endDate: "2024-03-31T23:59:59.999Z",
+								active: true,
+							},
+							status: "active",
+							createdAt: "2024-02-24T00:00:00.000Z",
+							updatedAt: "2024-02-24T00:00:00.000Z",
+						},
+					],
+					summary: {
+						total: 1,
+						updated: 1,
+						skipped: 0,
+						message: "Successfully updated 1 item",
+					},
+				},
+			},
+		],
+	}
 );
 
 export const StockUpdateResponseSchema = ResponseWrapper(

@@ -15,7 +15,6 @@ import modifierRoutes from "./routes/v1";
 import { Logger } from "./services/logger.service";
 import { TokenCleanupService } from "./services/token-cleanup.service";
 import { handleError } from "./utils/error-handler";
-import { CartCleanupService } from "./services/cart-cleanup.service";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
@@ -113,17 +112,10 @@ export async function buildServer(): Promise<FastifyInstance> {
 		const tokenCleanup = TokenCleanupService.getInstance();
 		await tokenCleanup.start();
 
-		// Start cart cleanup service
-		const cartCleanup = CartCleanupService.getInstance();
-		await cartCleanup.start();
-
 		// Register shutdown hook
 		server.addHook("onClose", async (_instance) => {
 			// Stop token cleanup service
 			await tokenCleanup.stop();
-
-			// Stop cart cleanup service
-			await cartCleanup.stop();
 
 			// Log shutdown
 			Logger.info("Shutting down cleanup services", "Server");

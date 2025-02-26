@@ -4,7 +4,10 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
 import { IItem, Item, IVariant } from "../../../../models/Item";
 import { Supplier } from "../../../../models/Supplier";
-import { BulkCreateItemBody } from "../../../../schemas/items";
+import {
+	BulkCreateItemBody,
+	BulkItemUpdateBody,
+} from "../../../../schemas/items";
 import { Logger } from "../../../../services/logger.service";
 import {
 	CommonErrors,
@@ -17,7 +20,6 @@ import {
 	formatVNDPrice,
 	validateVNDPrice,
 } from "../../../../constants/currency.constants";
-import { Cart } from "../../../../models/Cart";
 
 export class ItemHandler {
 	// Validation methods as static
@@ -296,6 +298,394 @@ export class ItemHandler {
 		}, "ItemHandler");
 	}
 
+	// Bulk update items
+	async bulkUpdateItems(
+		request: FastifyRequest<{ Body: Static<typeof BulkItemUpdateBody> }>,
+		reply: FastifyReply
+	) {
+		return withTransaction(async (session) => {
+			const { items } = request.body;
+
+			Logger.debug(
+				`Starting bulk update for ${items.length} items`,
+				"ItemHandler"
+			);
+
+			if (items.length === 0) {
+				throw createBusinessError("No items provided for update");
+			}
+
+			// Keep track of results
+			const results = {
+				total: items.length,
+				updated: 0,
+				skipped: 0,
+				updatedItems: [] as any[],
+			};
+
+			// Process each item
+			for (const itemUpdate of items) {
+				try {
+					const { itemId, update, variants, discount } = itemUpdate;
+
+					if (!mongoose.Types.ObjectId.isValid(itemId)) {
+						Logger.warn(
+							`Skipping update for invalid itemId: ${itemId}`,
+							"ItemHandler"
+						);
+						results.skipped++;
+						continue;
+					}
+
+					// Get current item
+					const currentItem = await Item.findById(itemId).session(
+						session
+					);
+					if (!currentItem) {
+						Logger.warn(
+							`Item not found: ${itemId}, skipping update`,
+							"ItemHandler"
+						);
+						results.skipped++;
+						continue;
+					}
+
+					// Prepare update object
+					const updateData: any = {};
+
+					// Add basic fields if provided
+					if (update) {
+						Object.keys(update).forEach((key) => {
+							if (
+								update[key as keyof typeof update] !== undefined
+							) {
+								updateData[key] =
+									update[key as keyof typeof update];
+							}
+						});
+					}
+
+					// Handle supplier validation if being updated
+					if (update?.supplier) {
+						const supplier = await Supplier.findById(
+							update.supplier
+						).session(session);
+						if (!supplier) {
+							Logger.warn(
+								`Supplier not found: ${update.supplier}, skipping item update for ${itemId}`,
+								"ItemHandler"
+							);
+							results.skipped++;
+							continue;
+						}
+
+						if (supplier.status !== "active") {
+							Logger.warn(
+								`Supplier is not active: ${update.supplier}, skipping item update for ${itemId}`,
+								"ItemHandler"
+							);
+							results.skipped++;
+							continue;
+						}
+					}
+
+					// Handle discount if provided
+					if (discount) {
+						// Validate discount dates
+						try {
+							const startDate = new Date(discount.startDate);
+							const endDate = new Date(discount.endDate);
+
+							if (
+								isNaN(startDate.getTime()) ||
+								isNaN(endDate.getTime())
+							) {
+								throw new Error("Invalid date format");
+							}
+
+							if (startDate >= endDate) {
+								throw new Error(
+									"End date must be after start date"
+								);
+							}
+
+							updateData.discount = {
+								percentage: discount.percentage,
+								startDate,
+								endDate,
+								active: discount.active,
+							};
+
+							// Validate that discounted prices will still be valid
+							const effectiveVariants = variants?.update
+								? currentItem.variants.map((v: IVariant) => {
+										const updateInfo =
+											variants.update?.find(
+												(u) => u.sku === v.sku
+											);
+										return updateInfo?.price !== undefined
+											? { ...v, price: updateInfo.price }
+											: v;
+								  })
+								: currentItem.variants;
+
+							ItemHandler.validateDiscountedPrices(
+								effectiveVariants,
+								discount.percentage
+							);
+						} catch (error) {
+							const errorMessage =
+								error instanceof Error
+									? error.message
+									: "Unknown error";
+							Logger.warn(
+								`Invalid discount for item ${itemId}: ${errorMessage}, skipping discount update`,
+								"ItemHandler"
+							);
+							// Continue with other updates, just skip discount
+						}
+					}
+
+					// Handle variant changes
+					if (variants) {
+						// Track all SKUs to check for duplicates
+						const existingSkus = new Set(
+							currentItem.variants.map((v: IVariant) => v.sku)
+						);
+
+						// Create a copy of the variants array to modify
+						const updatedVariants = JSON.parse(
+							JSON.stringify(currentItem.variants)
+						);
+
+						// Process variant updates
+						if (variants.update && variants.update.length > 0) {
+							for (const variantUpdate of variants.update) {
+								const existingVariantIndex =
+									updatedVariants.findIndex(
+										(v: IVariant) =>
+											v.sku === variantUpdate.sku
+									);
+
+								if (existingVariantIndex === -1) {
+									Logger.warn(
+										`Variant with SKU ${variantUpdate.sku} not found in item ${itemId}, skipping variant update`,
+										"ItemHandler"
+									);
+									continue;
+								}
+
+								// Create a new object that preserves all existing fields
+								const updatedVariant = {
+									...updatedVariants[existingVariantIndex],
+								};
+
+								// Apply updates
+								if (variantUpdate.price !== undefined) {
+									// Validate price
+									if (
+										!validateVNDPrice(variantUpdate.price)
+									) {
+										Logger.warn(
+											`Invalid price for variant ${variantUpdate.sku}: ${variantUpdate.price}, skipping price update`,
+											"ItemHandler"
+										);
+									} else {
+										updatedVariant.price =
+											variantUpdate.price;
+									}
+								}
+
+								if (variantUpdate.stockQuantity !== undefined) {
+									if (variantUpdate.stockQuantity < 0) {
+										Logger.warn(
+											`Invalid stock quantity for variant ${variantUpdate.sku}: ${variantUpdate.stockQuantity}, skipping quantity update`,
+											"ItemHandler"
+										);
+									} else {
+										updatedVariant.stockQuantity =
+											variantUpdate.stockQuantity;
+									}
+								}
+
+								if (
+									variantUpdate.lowStockThreshold !==
+									undefined
+								) {
+									updatedVariant.lowStockThreshold =
+										variantUpdate.lowStockThreshold;
+								}
+
+								if (variantUpdate.specifications) {
+									updatedVariant.specifications = {
+										...updatedVariant.specifications,
+										...variantUpdate.specifications,
+									};
+								}
+
+								// Replace the variant
+								updatedVariants[existingVariantIndex] =
+									updatedVariant;
+							}
+						}
+
+						// Process variant removals
+						if (variants.remove && variants.remove.length > 0) {
+							// Filter out variants to be removed
+							const filteredVariants = updatedVariants.filter(
+								(v: IVariant) =>
+									!variants.remove?.includes(v.sku)
+							);
+
+							// Ensure we have at least one variant left
+							if (filteredVariants.length === 0) {
+								Logger.warn(
+									`Cannot remove all variants from item ${itemId}, skipping variant removal`,
+									"ItemHandler"
+								);
+							} else {
+								// Update the variants array
+								updatedVariants.length = 0;
+								updatedVariants.push(...filteredVariants);
+							}
+						}
+
+						// Process variant additions
+						if (variants.add && variants.add.length > 0) {
+							// Validate new variants
+							for (const newVariant of variants.add) {
+								if (existingSkus.has(newVariant.sku)) {
+									Logger.warn(
+										`Duplicate SKU ${newVariant.sku} in item ${itemId}, skipping variant addition`,
+										"ItemHandler"
+									);
+									continue;
+								}
+
+								// Validate price
+								if (!validateVNDPrice(newVariant.price)) {
+									Logger.warn(
+										`Invalid price for new variant ${newVariant.sku}: ${newVariant.price}, skipping variant addition`,
+										"ItemHandler"
+									);
+									continue;
+								}
+
+								existingSkus.add(newVariant.sku);
+								updatedVariants.push(newVariant);
+							}
+						}
+
+						// Update the variants in the update data
+						updateData.variants = updatedVariants;
+					}
+
+					// Apply updates to the item
+					let updatedItem;
+					try {
+						// First try the update using findByIdAndUpdate
+						updatedItem = await Item.findByIdAndUpdate(
+							itemId,
+							{ $set: updateData },
+							{ new: true, runValidators: true, session }
+						);
+
+						if (!updatedItem) {
+							throw new Error("Failed to update item");
+						}
+					} catch (updateError) {
+						// If direct update fails, try the update using save
+						try {
+							Logger.warn(
+								`Standard update failed for ${itemId}, trying alternative approach: ${
+									updateError instanceof Error
+										? updateError.message
+										: "Unknown error"
+								}`,
+								"ItemHandler"
+							);
+
+							// Get the item again
+							const itemToUpdate = await Item.findById(
+								itemId
+							).session(session);
+							if (!itemToUpdate) {
+								throw new Error("Item not found");
+							}
+
+							// Apply updates directly to the document
+							Object.keys(updateData).forEach((key) => {
+								(itemToUpdate as any)[key as keyof IItem] =
+									updateData[key as keyof typeof updateData];
+							});
+
+							// Save with validation
+							updatedItem = await itemToUpdate.save({ session });
+						} catch (fallbackError) {
+							const errorMessage =
+								fallbackError instanceof Error
+									? fallbackError.message
+									: "Unknown error";
+							Logger.error(
+								fallbackError instanceof Error
+									? fallbackError
+									: new Error(errorMessage),
+								"ItemHandler"
+							);
+							results.skipped++;
+							continue;
+						}
+					}
+
+					if (updatedItem) {
+						results.updated++;
+						results.updatedItems.push(updatedItem);
+						Logger.info(
+							`Successfully updated item: ${itemId}`,
+							"ItemHandler"
+						);
+					} else {
+						results.skipped++;
+						Logger.warn(
+							`Failed to update item: ${itemId}`,
+							"ItemHandler"
+						);
+					}
+				} catch (error) {
+					const errorMessage =
+						error instanceof Error
+							? error.message
+							: "Unknown error";
+					Logger.error(
+						error instanceof Error
+							? error
+							: new Error(errorMessage),
+						"ItemHandler"
+					);
+					results.skipped++;
+				}
+			}
+
+			Logger.info(
+				`Bulk update completed: ${results.updated} updated, ${results.skipped} skipped`,
+				"ItemHandler"
+			);
+
+			return reply.code(200).send({
+				success: true,
+				data: {
+					items: results.updatedItems,
+					summary: {
+						total: results.total,
+						updated: results.updated,
+						skipped: results.skipped,
+						message: `Successfully updated ${results.updated} items, skipped ${results.skipped} items`,
+					},
+				},
+			});
+		}, "ItemHandler");
+	}
+
 	// Get item by ID
 	async getItem(
 		request: FastifyRequest<{ Params: { itemId: string } }>,
@@ -320,122 +710,6 @@ export class ItemHandler {
 			success: true,
 			data: { item },
 		});
-	}
-
-	// Update item
-	async updateItem(
-		request: FastifyRequest<{
-			Params: { itemId: string };
-			Body: Partial<IItem>;
-		}>,
-		reply: FastifyReply
-	) {
-		return withTransaction(async (session) => {
-			const { itemId } = request.params;
-			const updateData = request.body;
-
-			if (!mongoose.Types.ObjectId.isValid(itemId)) {
-				throw CommonErrors.invalidFormat("item ID");
-			}
-
-			// Get current item data for complete validation
-			const currentItem = await Item.findById(itemId).session(session);
-			if (!currentItem) {
-				throw CommonErrors.itemNotFound();
-			}
-
-			// Check supplier if it's being updated
-			if (updateData.supplier) {
-				const supplier = await Supplier.findById(
-					updateData.supplier
-				).session(session);
-				if (!supplier) {
-					throw CommonErrors.supplierNotFound();
-				}
-				if (supplier.status !== "active") {
-					throw createBusinessError("Supplier is not active");
-				}
-			}
-
-			// Merge current and update data for validation
-			const itemToValidate = {
-				...currentItem.toObject(),
-				...updateData,
-				variants: updateData.variants || currentItem.variants,
-			};
-
-			// Validate variants if being updated
-			if (updateData.variants) {
-				const skus = new Set<string>();
-				for (const variant of updateData.variants) {
-					if (skus.has(variant.sku)) {
-						throw createBusinessError(
-							`Duplicate SKU found: ${variant.sku}`
-						);
-					}
-					skus.add(variant.sku);
-
-					// Validate variant price
-					if (!validateVNDPrice(variant.price)) {
-						throw createBusinessError(
-							`Price for variant ${variant.sku} (${formatVNDPrice(
-								variant.price
-							)}) is invalid. ${CURRENCY_CONSTANTS.ERRORS.INVALID_PRICE_RANGE(
-								CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
-								CURRENCY_CONSTANTS.ITEM.MAX_PRICE
-							)}`
-						);
-					}
-				}
-			}
-
-			// Validate discount if being updated
-			if (updateData.discount) {
-				// First validate discount structure and dates
-				ItemHandler.validateDiscount(updateData.discount);
-
-				// Validate the resulting prices if discount is or will be active
-				if (updateData.discount.active) {
-					ItemHandler.validateDiscountedPrices(
-						itemToValidate.variants,
-						updateData.discount.percentage
-					);
-				}
-			}
-
-			// Update the item
-			const item = await Item.findByIdAndUpdate(
-				itemId,
-				{ $set: updateData },
-				{ new: true, runValidators: true, session }
-			);
-
-			if (!item) {
-				throw CommonErrors.itemNotFound();
-			}
-
-			// Check if we need to update carts that have this item
-			if (
-				updateData.variants ||
-				updateData.discount ||
-				updateData.status === "discontinued"
-			) {
-				await Cart.updateMany(
-					{ "items.itemId": itemId },
-					{ $set: { "items.$[item].status": "needsUpdate" } },
-					{
-						arrayFilters: [{ "item.itemId": itemId }],
-						session,
-					}
-				);
-			}
-
-			Logger.info(`Item updated successfully: ${itemId}`, "ItemHandler");
-			return reply.send({
-				success: true,
-				data: { item },
-			});
-		}, "ItemHandler");
 	}
 
 	// Delete item

@@ -4,10 +4,11 @@ import { FastifyInstance } from "fastify";
 import {
 	BulkCreateItemBody,
 	BulkCreateItemResponse,
+	BulkItemUpdateBody,
+	BulkItemUpdateResponse,
 	ErrorResponseSchema,
 	SingleItemResponseSchema,
 	StockUpdateResponseSchema,
-	UpdateItemBody,
 	UpdateStockBody,
 } from "../../../schemas";
 import { ItemHandler } from "./handlers/items.handler";
@@ -34,26 +35,22 @@ export default async function itemRoutes(fastify: FastifyInstance) {
 		handler: handler.createItemsBulk,
 	});
 
-	// Update item (admin only)
-	fastify.put("/:itemId", {
+	// Bulk update items (admin only)
+	fastify.put("/bulk-update", {
 		schema: {
 			tags: ["Items"],
-			description: "Update item by ID (Admin only)",
-			params: Type.Object({
-				itemId: Type.String({ pattern: "^[0-9a-fA-F]{24}$" }),
-			}),
-			body: UpdateItemBody,
+			description: "Bulk update multiple items (Admin only)",
+			body: BulkItemUpdateBody,
 			response: {
-				200: SingleItemResponseSchema,
+				200: BulkItemUpdateResponse,
 				400: ErrorResponseSchema,
 				401: ErrorResponseSchema,
 				403: ErrorResponseSchema,
-				404: ErrorResponseSchema,
 				500: ErrorResponseSchema,
 			},
 		},
 		...fastify.protectedRoute(["admin"]),
-		handler: handler.updateItem,
+		handler: handler.bulkUpdateItems,
 	});
 
 	// Delete item (admin only)
