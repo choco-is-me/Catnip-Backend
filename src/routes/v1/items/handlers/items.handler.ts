@@ -758,7 +758,6 @@ export class ItemHandler {
 	}
 
 	// List items with filtering, sorting and pagination (Including search)
-	// Inside ItemHandler class
 	async listItems(
 		request: FastifyRequest<{
 			Querystring: {
@@ -801,60 +800,136 @@ export class ItemHandler {
 				Math.max(1, Math.floor(Number(limit)))
 			);
 
-			// Create initial pipeline stages array
+			// Create base filter object
+			const baseFilters: mongoose.FilterQuery<IItem> = {};
+
+			// Add status filter if provided
+			if (status) {
+				baseFilters.status = status;
+			}
+
+			// Add supplier filter with validation
+			if (supplier) {
+				if (!mongoose.Types.ObjectId.isValid(supplier)) {
+					throw CommonErrors.invalidFormat("supplier ID");
+				}
+				baseFilters.supplier = new mongoose.Types.ObjectId(supplier);
+			}
+
+			// Add rating filter with validation
+			if (minRating !== undefined && minRating >= 0 && minRating <= 5) {
+				baseFilters["ratings.average"] = { $gte: minRating };
+			}
+
+			// Tags filter with validation
+			if (tags) {
+				const tagArray = Array.isArray(tags)
+					? tags
+					: tags
+							.split(",")
+							.map((tag) => tag.trim())
+							.filter(Boolean);
+				if (tagArray.length > 0) {
+					baseFilters.tags = { $all: tagArray };
+				}
+			}
+
+			// Initialize pipeline
 			const pipeline: mongoose.PipelineStage[] = [];
 
-			// Handle text search first if it exists
+			// Handle text search if provided using Atlas Search
 			if (search?.trim()) {
 				pipeline.push(
 					{
-						$match: {
-							$text: {
-								$search: search.trim(),
-								$caseSensitive: false,
-								$diacriticSensitive: false,
+						$search: {
+							index: "items_search", // Make sure to create this index in Atlas
+							compound: {
+								should: [
+									{
+										text: {
+											query: search.trim(),
+											path: "name",
+											fuzzy: {
+												maxEdits: 1,
+												prefixLength: 1,
+											},
+											score: { boost: { value: 5 } },
+										},
+									},
+									{
+										text: {
+											query: search.trim(),
+											path: "tags",
+											fuzzy: { maxEdits: 1 },
+											score: { boost: { value: 3 } },
+										},
+									},
+									// Support partial matches using the dedicated autocomplete field
+									{
+										autocomplete: {
+											query: search.trim(),
+											path: "name",
+											tokenOrder: "sequential",
+											fuzzy: {
+												maxEdits: 1,
+												prefixLength: 1,
+											},
+											score: { boost: { value: 2 } },
+										},
+									},
+								],
 							},
+							highlight: { path: ["name"] },
 						},
 					},
 					{
 						$addFields: {
-							score: { $meta: "textScore" },
+							searchScore: { $meta: "searchScore" },
+							highlights: { $meta: "searchHighlights" },
 						},
 					}
 				);
 			}
 
+			// Apply base filters
+			if (Object.keys(baseFilters).length > 0) {
+				pipeline.push({ $match: baseFilters });
+			}
+
+			// Stock filtering
+			if (inStock !== undefined) {
+				pipeline.push({
+					$match: {
+						variants: {
+							$elemMatch: {
+								stockQuantity: inStock ? { $gt: 0 } : 0,
+							},
+						},
+					},
+				});
+			} else {
+				// By default we only show in-stock items
+				pipeline.push({
+					$match: {
+						variants: {
+							$elemMatch: {
+								stockQuantity: { $gt: 0 },
+							},
+						},
+					},
+				});
+			}
+
 			// Add price calculation stages
 			pipeline.push(
-				// Get active variants
+				// Calculate lowest price from variants
 				{
 					$addFields: {
-						activeVariants: {
-							$filter: {
-								input: "$variants",
-								as: "variant",
-								cond: { $gt: ["$$variant.stockQuantity", 0] },
-							},
-						},
+						lowestPrice: { $min: "$variants.price" },
 					},
 				},
 
-				// Calculate lowest price from active variants
-				{
-					$addFields: {
-						lowestPrice: {
-							$min: {
-								$cond: [
-									{ $gt: [{ $size: "$activeVariants" }, 0] },
-									"$activeVariants.price",
-									Number.MAX_SAFE_INTEGER,
-								],
-							},
-						},
-					},
-				},
-
-				// Calculate effective price with discounts
+				// Calculate effective price with discounts (for item-level sorting and filtering)
 				{
 					$addFields: {
 						effectivePrice: {
@@ -862,12 +937,6 @@ export class ItemHandler {
 								if: {
 									$and: [
 										{ $eq: ["$discount.active", true] },
-										{
-											$gt: [
-												{ $size: "$activeVariants" },
-												0,
-											],
-										},
 										{
 											$lt: [
 												"$discount.startDate",
@@ -903,94 +972,134 @@ export class ItemHandler {
 					},
 				},
 
-				// Remove items with no active variants
+				// Calculate effective price for each variant
 				{
-					$match: {
-						lowestPrice: { $ne: Number.MAX_SAFE_INTEGER },
+					$addFields: {
+						variants: {
+							$map: {
+								input: "$variants",
+								as: "variant",
+								in: {
+									$mergeObjects: [
+										"$$variant",
+										{
+											effectivePrice: {
+												$cond: {
+													if: {
+														$and: [
+															{
+																$eq: [
+																	"$discount.active",
+																	true,
+																],
+															},
+															{
+																$lt: [
+																	"$discount.startDate",
+																	"$$NOW",
+																],
+															},
+															{
+																$gt: [
+																	"$discount.endDate",
+																	"$$NOW",
+																],
+															},
+														],
+													},
+													then: {
+														$round: [
+															{
+																$multiply: [
+																	"$$variant.price",
+																	{
+																		$subtract:
+																			[
+																				1,
+																				{
+																					$divide:
+																						[
+																							"$discount.percentage",
+																							100,
+																						],
+																				},
+																			],
+																	},
+																],
+															},
+														],
+													},
+													else: "$$variant.price",
+												},
+											},
+											discountPercentage: {
+												$cond: {
+													if: {
+														$and: [
+															{
+																$eq: [
+																	"$discount.active",
+																	true,
+																],
+															},
+															{
+																$lt: [
+																	"$discount.startDate",
+																	"$$NOW",
+																],
+															},
+															{
+																$gt: [
+																	"$discount.endDate",
+																	"$$NOW",
+																],
+															},
+														],
+													},
+													then: "$discount.percentage",
+													else: 0,
+												},
+											},
+										},
+									],
+								},
+							},
+						},
 					},
 				}
 			);
 
-			// Add other filters
-			const filters: mongoose.FilterQuery<IItem> = {};
-
-			// Tags filter with validation
-			if (tags) {
-				const tagArray = Array.isArray(tags)
-					? tags
-					: tags
-							.split(",")
-							.map((tag) => tag.trim())
-							.filter(Boolean);
-				if (tagArray.length > 0) {
-					filters.tags = { $all: tagArray };
-				}
-			}
-
-			// Price range filter
+			// Price range filter - apply after calculating effectivePrice
 			if (minPrice !== undefined || maxPrice !== undefined) {
+				const priceFilter: any = {};
+				if (minPrice !== undefined) priceFilter.$gte = minPrice;
+				if (maxPrice !== undefined) priceFilter.$lte = maxPrice;
+
 				pipeline.push({
 					$match: {
-						effectivePrice: {
-							...(minPrice !== undefined
-								? { $gte: minPrice }
-								: {}),
-							...(maxPrice !== undefined
-								? { $lte: maxPrice }
-								: {}),
-						},
+						effectivePrice: priceFilter,
 					},
 				});
 			}
 
-			// Status filter
-			if (status) {
-				filters.status = status;
-			}
-
-			// Supplier filter with validation
-			if (supplier) {
-				if (!mongoose.Types.ObjectId.isValid(supplier)) {
-					throw CommonErrors.invalidFormat("supplier ID");
-				}
-				filters.supplier = new mongoose.Types.ObjectId(supplier);
-			}
-
-			// Rating filter with validation
-			if (minRating !== undefined && minRating >= 0 && minRating <= 5) {
-				filters["ratings.average"] = { $gte: minRating };
-			}
-
-			// Stock filter
-			if (inStock !== undefined) {
-				filters["variants"] = {
-					$elemMatch: {
-						stockQuantity: inStock ? { $gt: 0 } : 0,
-					},
-				};
-			}
-
-			// Add non-text filters if they exist
-			if (Object.keys(filters).length > 0) {
-				pipeline.push({ $match: filters });
-			}
+			// Create a copy of the pipeline for counting, without sorting/pagination
+			const countPipeline = [...pipeline];
 
 			// Add sorting
-			const sortStage: { $sort: Record<string, 1 | -1> } = {
-				$sort: {},
-			};
-
-			if (search?.trim() && sortBy === "createdAt") {
-				sortStage.$sort = { score: -1 };
-			} else if (sortBy === "effectivePrice") {
-				sortStage.$sort = {
-					effectivePrice: sortOrder === "desc" ? -1 : 1,
-				};
+			if (sortBy === "effectivePrice") {
+				pipeline.push({
+					$sort: { effectivePrice: sortOrder === "desc" ? -1 : 1 },
+				});
+			} else if (search?.trim() && sortBy === "createdAt") {
+				// Use search score for sorting when searching
+				pipeline.push({
+					$sort: { searchScore: -1 },
+				});
 			} else {
-				sortStage.$sort = { [sortBy]: sortOrder === "desc" ? -1 : 1 };
+				pipeline.push({
+					$sort: { [sortBy]: sortOrder === "desc" ? -1 : 1 },
+				});
 			}
-
-			pipeline.push(sortStage);
 
 			// Add pagination
 			pipeline.push(
@@ -998,22 +1107,17 @@ export class ItemHandler {
 				{ $limit: validatedLimit }
 			);
 
-			// Execute query with proper count
-			const [items, totalDocs] = await Promise.all([
+			// Execute queries with proper count
+			const [items, countResult] = await Promise.all([
 				Item.aggregate(pipeline),
-				search?.trim()
-					? Item.countDocuments({
-							$text: { $search: search.trim() },
-							...filters,
-					  })
-					: Item.countDocuments(filters),
+				Item.aggregate([...countPipeline, { $count: "total" }]),
 			]);
 
-			// Calculate pagination metadata
-			const totalPages = Math.ceil(totalDocs / validatedLimit);
+			const total = countResult.length > 0 ? countResult[0].total : 0;
+			const totalPages = Math.ceil(total / validatedLimit);
 
 			// Validate requested page number
-			if (validatedPage > totalPages && totalDocs > 0) {
+			if (validatedPage > totalPages && total > 0) {
 				throw CommonErrors.invalidFormat(
 					`Page ${validatedPage} exceeds available pages (${totalPages})`
 				);
@@ -1029,13 +1133,10 @@ export class ItemHandler {
 				data: {
 					items: items.map((item) => ({
 						...item,
-						effectivePrice: item.effectivePrice,
-						// Remove internal fields used for calculation
-						activeVariants: undefined,
-						lowestPrice: undefined,
+						highlights: item.highlights || undefined, // Include search highlights when available
 					})),
 					pagination: {
-						total: totalDocs,
+						total,
 						page: validatedPage,
 						totalPages,
 						hasNext: validatedPage < totalPages,
