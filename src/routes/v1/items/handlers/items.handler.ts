@@ -20,6 +20,7 @@ import {
 	formatVNDPrice,
 	validateVNDPrice,
 } from "../../../../constants/currency.constants";
+import { CONFIG } from "../../../../config/index";
 
 export class ItemHandler {
 	// Validation methods as static
@@ -38,6 +39,82 @@ export class ItemHandler {
 
 		if (supplier.status !== "active") {
 			throw createBusinessError(`Supplier ${supplierId} is not active`);
+		}
+	}
+
+	// Validate item names for duplicates
+	private static async validateItemNames(
+		items: Array<{ name: string; id?: string }>,
+		session: mongoose.ClientSession
+	): Promise<void> {
+		// Normalize item names for consistent comparison
+		const normalizedItems = items.map((item) => ({
+			...item,
+			normalizedName: item.name.toLowerCase().trim(),
+		}));
+
+		// Check for duplicates within the current batch
+		const duplicateNamesMap = new Map<string, string[]>();
+
+		normalizedItems.forEach((item) => {
+			// Count occurrences of each normalized name and track the original names
+			const itemsWithSameName = normalizedItems.filter(
+				(i) => i.normalizedName === item.normalizedName
+			);
+
+			if (itemsWithSameName.length > 1) {
+				duplicateNamesMap.set(
+					item.normalizedName,
+					itemsWithSameName.map((i) => i.name)
+				);
+			}
+		});
+
+		if (duplicateNamesMap.size > 0) {
+			const duplicatesInfo = Array.from(duplicateNamesMap.entries())
+				.map(([_, names]) => `"${names.join('", "')}"`)
+				.join(", ");
+
+			throw createBusinessError(
+				`Duplicate item names found within request: ${duplicatesInfo}`
+			);
+		}
+
+		// Extract actual names for database check
+		const itemNames = normalizedItems.map((item) => item.normalizedName);
+
+		// Prepare exclusion IDs for items being updated (not applicable in create)
+		const excludeIds = items
+			.filter((item) => item.id !== undefined)
+			.map((item) => item.id as string)
+			.filter((id) => mongoose.Types.ObjectId.isValid(id))
+			.map((id) => new mongoose.Types.ObjectId(id));
+
+		// Build the query
+		const query: mongoose.FilterQuery<IItem> = {
+			name: {
+				$in: itemNames.map((name) => new RegExp(`^${name}$`, "i")),
+			},
+		};
+
+		// Add exclusion if we have valid IDs
+		if (excludeIds.length > 0) {
+			query._id = { $nin: excludeIds };
+		}
+
+		// Check for duplicates against existing items in the database
+		const existingItems = await Item.find(query)
+			.select("name")
+			.session(session)
+			.lean();
+
+		if (existingItems.length > 0) {
+			const existingNames = existingItems.map((item) => item.name);
+			throw createBusinessError(
+				`Items with these names already exist: "${existingNames.join(
+					'", "'
+				)}"`
+			);
 		}
 	}
 
@@ -90,6 +167,85 @@ export class ItemHandler {
 					`Invalid stock quantity for SKU ${variant.sku}: cannot be negative`
 				);
 			}
+		}
+	}
+
+	// Validate SKUs against existing items in the database
+	private static async validateSkusAgainstDatabase(
+		skus: string[],
+		excludeItemIds: string[] = [],
+		session: mongoose.ClientSession
+	): Promise<void> {
+		if (skus.length === 0) {
+			return;
+		}
+
+		// Query to find any items with the same SKUs but not in the excluded item IDs
+		const query: mongoose.FilterQuery<IItem> = {
+			"variants.sku": { $in: skus },
+		};
+
+		// Add exclusion of item IDs if provided
+		if (excludeItemIds.length > 0) {
+			const objectIds = excludeItemIds
+				.filter((id) => mongoose.Types.ObjectId.isValid(id))
+				.map((id) => new mongoose.Types.ObjectId(id));
+
+			if (objectIds.length > 0) {
+				query._id = { $nin: objectIds };
+			}
+		}
+
+		// Find items with these SKUs
+		const existingItems = await Item.find(query)
+			.select("name variants.sku")
+			.session(session)
+			.lean();
+
+		if (existingItems.length > 0) {
+			// Extract the conflicting SKUs with item names
+			const conflicts: Record<string, string> = {};
+			existingItems.forEach((item) => {
+				item.variants.forEach((variant: IVariant) => {
+					if (skus.includes(variant.sku)) {
+						conflicts[variant.sku] = item.name;
+					}
+				});
+			});
+
+			const conflictMessages = Object.entries(conflicts).map(
+				([sku, itemName]) =>
+					`SKU "${sku}" already used in item "${itemName}"`
+			);
+
+			throw createBusinessError(
+				`SKU conflicts detected: ${conflictMessages.join(", ")}`
+			);
+		}
+	}
+
+	// Validate a single item name against the database
+	private static async validateItemNameUpdate(
+		itemId: string,
+		newName: string,
+		session: mongoose.ClientSession
+	): Promise<void> {
+		// Trim the name to ensure consistent comparison
+		const trimmedName = newName.trim();
+
+		// Check if any other item has this name
+		const existingItem = await Item.findOne({
+			name: trimmedName,
+			_id: { $ne: new mongoose.Types.ObjectId(itemId) },
+		})
+			.select("_id name")
+			.session(session)
+			.lean();
+
+		if (existingItem) {
+			throw createBusinessError(
+				`Cannot update name: An item with name "${trimmedName}" already exists`
+			);
 		}
 	}
 
@@ -192,7 +348,33 @@ export class ItemHandler {
 
 			const allSkus = new Set<string>();
 
+			// Prepare items for name validation
+			const itemsForNameValidation = items.map((item) => ({
+				name: item.name,
+			}));
+
 			try {
+				// Validate item names (check for duplicates)
+				await ItemHandler.validateItemNames(
+					itemsForNameValidation,
+					session
+				);
+
+				// Extract all SKUs from all variants to check globally
+				const allNewSkus: string[] = [];
+				items.forEach((item) => {
+					item.variants.forEach((variant) => {
+						allNewSkus.push(variant.sku);
+					});
+				});
+
+				// Validate SKUs against database
+				await ItemHandler.validateSkusAgainstDatabase(
+					allNewSkus,
+					[],
+					session
+				);
+
 				// Sequential validation to prevent transaction issues
 				const preparedItems = [];
 				for (const itemData of items) {
@@ -221,6 +403,7 @@ export class ItemHandler {
 						session
 					);
 
+					// Local SKU validation (within the item)
 					ItemHandler.validateVariants(itemData.variants, allSkus);
 
 					// Validate discount if present
@@ -315,6 +498,37 @@ export class ItemHandler {
 				throw createBusinessError("No items provided for update");
 			}
 
+			// Validate all name updates first to prevent partial updates
+			const itemsNeedingNameValidation = items
+				.filter((item) => item.update?.name !== undefined)
+				.map((item) => ({
+					name: item.update!.name!,
+					id: item.itemId,
+				}));
+
+			if (itemsNeedingNameValidation.length > 0) {
+				try {
+					await ItemHandler.validateItemNames(
+						itemsNeedingNameValidation,
+						session
+					);
+				} catch (error) {
+					// Extract the proper error message
+					const errorMessage =
+						error instanceof Error
+							? error.message
+							: "Unknown error";
+
+					Logger.warn(
+						`Name validation failed: ${errorMessage}`,
+						"ItemHandler"
+					);
+
+					// Throw the original error or a wrapped version that preserves the message
+					throw createBusinessError(errorMessage);
+				}
+			}
+
 			// Keep track of results
 			const results = {
 				total: items.length,
@@ -367,21 +581,28 @@ export class ItemHandler {
 
 					// Handle supplier validation if being updated
 					if (update?.supplier) {
-						const supplier = await Supplier.findById(
-							update.supplier
-						).session(session);
-						if (!supplier) {
-							Logger.warn(
-								`Supplier not found: ${update.supplier}, skipping item update for ${itemId}`,
-								"ItemHandler"
-							);
-							results.skipped++;
-							continue;
-						}
+						try {
+							const supplier = await Supplier.findById(
+								update.supplier
+							).session(session);
+							if (!supplier) {
+								throw new Error(
+									`Supplier not found: ${update.supplier}`
+								);
+							}
 
-						if (supplier.status !== "active") {
+							if (supplier.status !== "active") {
+								throw new Error(
+									`Supplier is not active: ${update.supplier}`
+								);
+							}
+						} catch (error) {
 							Logger.warn(
-								`Supplier is not active: ${update.supplier}, skipping item update for ${itemId}`,
+								`Supplier validation failed for item ${itemId}: ${
+									error instanceof Error
+										? error.message
+										: "Unknown error"
+								}`,
 								"ItemHandler"
 							);
 							results.skipped++;
@@ -452,6 +673,38 @@ export class ItemHandler {
 						const existingSkus = new Set(
 							currentItem.variants.map((v: IVariant) => v.sku)
 						);
+
+						// Collect new SKUs being added
+						const newSkus: string[] = [];
+						if (variants.add && variants.add.length > 0) {
+							for (const newVariant of variants.add) {
+								if (!existingSkus.has(newVariant.sku)) {
+									newSkus.push(newVariant.sku);
+								}
+							}
+						}
+
+						// Validate new SKUs against database (excluding current item)
+						if (newSkus.length > 0) {
+							try {
+								await ItemHandler.validateSkusAgainstDatabase(
+									newSkus,
+									[itemId], // Exclude current item
+									session
+								);
+							} catch (error) {
+								Logger.warn(
+									`SKU validation failed for item ${itemId}: ${
+										error instanceof Error
+											? error.message
+											: "Unknown error"
+									}`,
+									"ItemHandler"
+								);
+								results.skipped++;
+								continue; // Skip this item update
+							}
+						}
 
 						// Create a copy of the variants array to modify
 						const updatedVariants = JSON.parse(
@@ -839,47 +1092,68 @@ export class ItemHandler {
 
 			// Handle text search if provided using Atlas Search
 			if (search?.trim()) {
+				// Create a cleaned search term
+				const cleanedSearch = search.trim().toLowerCase();
+
+				// Tokenize the search query for more granular matching
+				const searchTokens = cleanedSearch
+					.split(/\s+/)
+					.filter((token) => token.length > 1);
+
 				pipeline.push(
 					{
 						$search: {
-							index: "items_search", // Make sure to create this index in Atlas
+							index: "items_search",
 							compound: {
 								should: [
+									// Exact phrase matching with highest priority
 									{
 										text: {
-											query: search.trim(),
+											query: cleanedSearch,
+											path: "name",
+											score: { boost: { value: 10 } },
+										},
+									},
+									// Individual term matching on name
+									{
+										text: {
+											query: cleanedSearch,
 											path: "name",
 											fuzzy: {
 												maxEdits: 1,
-												prefixLength: 1,
+												prefixLength: 2,
 											},
 											score: { boost: { value: 5 } },
 										},
 									},
+									// Tag matching
 									{
 										text: {
-											query: search.trim(),
+											query: cleanedSearch,
 											path: "tags",
-											fuzzy: { maxEdits: 1 },
+											fuzzy: {
+												maxEdits: 1,
+												prefixLength: 1,
+											},
 											score: { boost: { value: 3 } },
 										},
 									},
-									// Support partial matches using the dedicated autocomplete field
+									// Autocomplete for partial matching
 									{
 										autocomplete: {
-											query: search.trim(),
+											query: cleanedSearch,
 											path: "name",
 											tokenOrder: "sequential",
 											fuzzy: {
 												maxEdits: 1,
-												prefixLength: 1,
+												prefixLength: 2,
 											},
 											score: { boost: { value: 2 } },
 										},
 									},
 								],
 							},
-							highlight: { path: ["name"] },
+							highlight: { path: ["name", "tags"] },
 						},
 					},
 					{
@@ -1085,19 +1359,79 @@ export class ItemHandler {
 			// Create a copy of the pipeline for counting, without sorting/pagination
 			const countPipeline = [...pipeline];
 
-			// Add sorting
-			if (sortBy === "effectivePrice") {
+			// Add combined scoring and ranking for search results
+			if (search?.trim()) {
+				pipeline.push({
+					$addFields: {
+						// Combine search score with other relevance signals
+						combinedScore: {
+							$add: [
+								{ $multiply: ["$searchScore", 1.0] }, // Search match
+								{ $multiply: ["$ratings.average", 0.2] }, // Rating score
+								{
+									$multiply: [
+										{ $divide: ["$numberOfSales", 100] }, // Sales popularity
+										0.3,
+									],
+								},
+							],
+						},
+					},
+				});
+
+				// Sort by combined score instead of just search score
+				pipeline.push({
+					$sort: { combinedScore: -1 },
+				});
+			} else if (sortBy === "effectivePrice") {
 				pipeline.push({
 					$sort: { effectivePrice: sortOrder === "desc" ? -1 : 1 },
-				});
-			} else if (search?.trim() && sortBy === "createdAt") {
-				// Use search score for sorting when searching
-				pipeline.push({
-					$sort: { searchScore: -1 },
 				});
 			} else {
 				pipeline.push({
 					$sort: { [sortBy]: sortOrder === "desc" ? -1 : 1 },
+				});
+			}
+
+			// Add search debug info in development mode
+			const isDevelopment = CONFIG.NODE_ENV === "development";
+			if (isDevelopment && search?.trim()) {
+				pipeline.push({
+					$addFields: {
+						_searchDebug: {
+							score: "$searchScore",
+							combinedScore: "$combinedScore",
+							highlights: "$highlights",
+							matchedOn: {
+								$cond: {
+									if: {
+										$gt: [
+											{
+												$size: {
+													$ifNull: [
+														"$highlights",
+														[],
+													],
+												},
+											},
+											0,
+										],
+									},
+									then: {
+										$map: {
+											input: "$highlights",
+											as: "highlight",
+											in: {
+												path: "$$highlight.path",
+												texts: "$$highlight.texts.value",
+											},
+										},
+									},
+									else: "No explicit matches",
+								},
+							},
+						},
+					},
 				});
 			}
 
@@ -1128,13 +1462,23 @@ export class ItemHandler {
 				"ItemHandler"
 			);
 
+			// Remove debug info for production responses
+			const responseItems = items.map((item) => {
+				if (!isDevelopment) {
+					// Remove debug info in production
+					const { _searchDebug, ...cleanItem } = item;
+					return {
+						...cleanItem,
+						highlights: item.highlights || undefined, // Include search highlights when available
+					};
+				}
+				return item;
+			});
+
 			return reply.send({
 				success: true,
 				data: {
-					items: items.map((item) => ({
-						...item,
-						highlights: item.highlights || undefined, // Include search highlights when available
-					})),
+					items: responseItems,
 					pagination: {
 						total,
 						page: validatedPage,
