@@ -466,6 +466,14 @@ export const BulkItemUpdateResponse = ResponseWrapper(
 			updated: Type.Number(),
 			skipped: Type.Number(),
 			message: Type.String(),
+			errors: Type.Optional(
+				Type.Array(
+					Type.Object({
+						itemId: Type.String(),
+						reason: Type.String(),
+					})
+				)
+			),
 		}),
 	}),
 	{
@@ -502,10 +510,16 @@ export const BulkItemUpdateResponse = ResponseWrapper(
 						},
 					],
 					summary: {
-						total: 1,
+						total: 2,
 						updated: 1,
-						skipped: 0,
-						message: "Successfully updated 1 item",
+						skipped: 1,
+						message: "Successfully updated 1 item, skipped 1 item",
+						errors: [
+							{
+								itemId: "507f1f77bcf86cd799439012",
+								reason: 'SKU validation failed: SKU "ITEM-001" already used in item "Updated Item Name"',
+							},
+						],
 					},
 				},
 			},

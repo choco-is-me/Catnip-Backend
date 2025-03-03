@@ -224,31 +224,6 @@ export class ItemHandler {
 		}
 	}
 
-	// Validate a single item name against the database
-	private static async validateItemNameUpdate(
-		itemId: string,
-		newName: string,
-		session: mongoose.ClientSession
-	): Promise<void> {
-		// Trim the name to ensure consistent comparison
-		const trimmedName = newName.trim();
-
-		// Check if any other item has this name
-		const existingItem = await Item.findOne({
-			name: trimmedName,
-			_id: { $ne: new mongoose.Types.ObjectId(itemId) },
-		})
-			.select("_id name")
-			.session(session)
-			.lean();
-
-		if (existingItem) {
-			throw createBusinessError(
-				`Cannot update name: An item with name "${trimmedName}" already exists`
-			);
-		}
-	}
-
 	private static validateItemPrices(item: Partial<IItem>): void {
 		// Only validate variant prices
 		if (item.variants) {
@@ -507,26 +482,10 @@ export class ItemHandler {
 				}));
 
 			if (itemsNeedingNameValidation.length > 0) {
-				try {
-					await ItemHandler.validateItemNames(
-						itemsNeedingNameValidation,
-						session
-					);
-				} catch (error) {
-					// Extract the proper error message
-					const errorMessage =
-						error instanceof Error
-							? error.message
-							: "Unknown error";
-
-					Logger.warn(
-						`Name validation failed: ${errorMessage}`,
-						"ItemHandler"
-					);
-
-					// Throw the original error or a wrapped version that preserves the message
-					throw createBusinessError(errorMessage);
-				}
+				await ItemHandler.validateItemNames(
+					itemsNeedingNameValidation,
+					session
+				);
 			}
 
 			// Keep track of results
@@ -535,6 +494,10 @@ export class ItemHandler {
 				updated: 0,
 				skipped: 0,
 				updatedItems: [] as any[],
+				errors: [] as Array<{
+					itemId: string;
+					reason: string;
+				}>,
 			};
 
 			// Process each item
@@ -543,11 +506,10 @@ export class ItemHandler {
 					const { itemId, update, variants, discount } = itemUpdate;
 
 					if (!mongoose.Types.ObjectId.isValid(itemId)) {
-						Logger.warn(
-							`Skipping update for invalid itemId: ${itemId}`,
-							"ItemHandler"
-						);
+						const reason = `Invalid itemId format: ${itemId}`;
+						Logger.warn(reason, "ItemHandler");
 						results.skipped++;
+						results.errors.push({ itemId, reason });
 						continue;
 					}
 
@@ -556,11 +518,10 @@ export class ItemHandler {
 						session
 					);
 					if (!currentItem) {
-						Logger.warn(
-							`Item not found: ${itemId}, skipping update`,
-							"ItemHandler"
-						);
+						const reason = `Item not found: ${itemId}`;
+						Logger.warn(reason, "ItemHandler");
 						results.skipped++;
+						results.errors.push({ itemId, reason });
 						continue;
 					}
 
@@ -597,16 +558,18 @@ export class ItemHandler {
 								);
 							}
 						} catch (error) {
+							const reason = `Supplier validation failed: ${
+								error instanceof Error
+									? error.message
+									: "Unknown error"
+							}`;
 							Logger.warn(
-								`Supplier validation failed for item ${itemId}: ${
-									error instanceof Error
-										? error.message
-										: "Unknown error"
-								}`,
+								`${reason} for item ${itemId}`,
 								"ItemHandler"
 							);
 							results.skipped++;
-							continue;
+							results.errors.push({ itemId, reason });
+							continue; // Skip this item update
 						}
 					}
 
@@ -660,10 +623,18 @@ export class ItemHandler {
 									? error.message
 									: "Unknown error";
 							Logger.warn(
-								`Invalid discount for item ${itemId}: ${errorMessage}, skipping discount update`,
+								`Invalid discount for item ${itemId}: ${errorMessage}`,
 								"ItemHandler"
 							);
-							// Continue with other updates, just skip discount
+
+							// Instead of silently skipping the discount, note the error but continue
+							results.errors.push({
+								itemId,
+								reason: `Discount validation failed: ${errorMessage}`,
+							});
+
+							// Remove discount from updateData to skip updating it
+							delete updateData.discount;
 						}
 					}
 
@@ -693,15 +664,17 @@ export class ItemHandler {
 									session
 								);
 							} catch (error) {
+								const reason = `SKU validation failed: ${
+									error instanceof Error
+										? error.message
+										: "Unknown error"
+								}`;
 								Logger.warn(
-									`SKU validation failed for item ${itemId}: ${
-										error instanceof Error
-											? error.message
-											: "Unknown error"
-									}`,
+									`${reason} for item ${itemId}`,
 									"ItemHandler"
 								);
 								results.skipped++;
+								results.errors.push({ itemId, reason });
 								continue; // Skip this item update
 							}
 						}
@@ -710,6 +683,12 @@ export class ItemHandler {
 						const updatedVariants = JSON.parse(
 							JSON.stringify(currentItem.variants)
 						);
+
+						// Track variant-level errors
+						const variantErrors: Array<{
+							sku: string;
+							reason: string;
+						}> = [];
 
 						// Process variant updates
 						if (variants.update && variants.update.length > 0) {
@@ -721,10 +700,10 @@ export class ItemHandler {
 									);
 
 								if (existingVariantIndex === -1) {
-									Logger.warn(
-										`Variant with SKU ${variantUpdate.sku} not found in item ${itemId}, skipping variant update`,
-										"ItemHandler"
-									);
+									variantErrors.push({
+										sku: variantUpdate.sku,
+										reason: `Variant not found in item`,
+									});
 									continue;
 								}
 
@@ -739,10 +718,10 @@ export class ItemHandler {
 									if (
 										!validateVNDPrice(variantUpdate.price)
 									) {
-										Logger.warn(
-											`Invalid price for variant ${variantUpdate.sku}: ${variantUpdate.price}, skipping price update`,
-											"ItemHandler"
-										);
+										variantErrors.push({
+											sku: variantUpdate.sku,
+											reason: `Invalid price: ${variantUpdate.price}`,
+										});
 									} else {
 										updatedVariant.price =
 											variantUpdate.price;
@@ -751,10 +730,10 @@ export class ItemHandler {
 
 								if (variantUpdate.stockQuantity !== undefined) {
 									if (variantUpdate.stockQuantity < 0) {
-										Logger.warn(
-											`Invalid stock quantity for variant ${variantUpdate.sku}: ${variantUpdate.stockQuantity}, skipping quantity update`,
-											"ItemHandler"
-										);
+										variantErrors.push({
+											sku: variantUpdate.sku,
+											reason: `Invalid stock quantity: ${variantUpdate.stockQuantity}`,
+										});
 									} else {
 										updatedVariant.stockQuantity =
 											variantUpdate.stockQuantity;
@@ -792,10 +771,10 @@ export class ItemHandler {
 
 							// Ensure we have at least one variant left
 							if (filteredVariants.length === 0) {
-								Logger.warn(
-									`Cannot remove all variants from item ${itemId}, skipping variant removal`,
-									"ItemHandler"
-								);
+								results.errors.push({
+									itemId,
+									reason: "Cannot remove all variants from item",
+								});
 							} else {
 								// Update the variants array
 								updatedVariants.length = 0;
@@ -808,25 +787,37 @@ export class ItemHandler {
 							// Validate new variants
 							for (const newVariant of variants.add) {
 								if (existingSkus.has(newVariant.sku)) {
-									Logger.warn(
-										`Duplicate SKU ${newVariant.sku} in item ${itemId}, skipping variant addition`,
-										"ItemHandler"
-									);
+									variantErrors.push({
+										sku: newVariant.sku,
+										reason: "Duplicate SKU within item",
+									});
 									continue;
 								}
 
 								// Validate price
 								if (!validateVNDPrice(newVariant.price)) {
-									Logger.warn(
-										`Invalid price for new variant ${newVariant.sku}: ${newVariant.price}, skipping variant addition`,
-										"ItemHandler"
-									);
+									variantErrors.push({
+										sku: newVariant.sku,
+										reason: `Invalid price: ${newVariant.price}`,
+									});
 									continue;
 								}
 
 								existingSkus.add(newVariant.sku);
 								updatedVariants.push(newVariant);
 							}
+						}
+
+						// If there were any variant-level errors, add them to the item's errors
+						if (variantErrors.length > 0) {
+							results.errors.push({
+								itemId,
+								reason: `Variant issues: ${variantErrors
+									.map(
+										(ve) => `SKU "${ve.sku}": ${ve.reason}`
+									)
+									.join("; ")}`,
+							});
 						}
 
 						// Update the variants in the update data
@@ -886,6 +877,10 @@ export class ItemHandler {
 								"ItemHandler"
 							);
 							results.skipped++;
+							results.errors.push({
+								itemId,
+								reason: `Database error: ${errorMessage}`,
+							});
 							continue;
 						}
 					}
@@ -899,6 +894,10 @@ export class ItemHandler {
 						);
 					} else {
 						results.skipped++;
+						results.errors.push({
+							itemId,
+							reason: "Update failed for unknown reason",
+						});
 						Logger.warn(
 							`Failed to update item: ${itemId}`,
 							"ItemHandler"
@@ -916,6 +915,10 @@ export class ItemHandler {
 						"ItemHandler"
 					);
 					results.skipped++;
+					results.errors.push({
+						itemId: itemUpdate.itemId,
+						reason: errorMessage,
+					});
 				}
 			}
 
@@ -933,6 +936,10 @@ export class ItemHandler {
 						updated: results.updated,
 						skipped: results.skipped,
 						message: `Successfully updated ${results.updated} items, skipped ${results.skipped} items`,
+						errors:
+							results.errors.length > 0
+								? results.errors
+								: undefined,
 					},
 				},
 			});
