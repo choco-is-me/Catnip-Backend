@@ -21,6 +21,7 @@ import {
 	validateVNDPrice,
 } from "../../../../constants/currency.constants";
 import { CONFIG } from "../../../../config/index";
+import CartService from "@/services/cart.service";
 
 export class ItemHandler {
 	// Validation methods as static
@@ -837,6 +838,40 @@ export class ItemHandler {
 						if (!updatedItem) {
 							throw new Error("Failed to update item");
 						}
+
+						// Add cache invalidation here
+						const priceChanged = variants?.update?.some(
+							(v) => v.price !== undefined
+						);
+						const stockChanged = variants?.update?.some(
+							(v) => v.stockQuantity !== undefined
+						);
+						const discountChanged = discount !== undefined;
+						const statusChanged = update?.status !== undefined;
+						const nameChanged = update?.name !== undefined;
+
+						if (
+							priceChanged ||
+							stockChanged ||
+							discountChanged ||
+							nameChanged ||
+							statusChanged
+						) {
+							try {
+								await CartService.invalidateCartCacheForItem(
+									itemId
+								);
+								Logger.debug(
+									`Invalidated cart cache for item ${itemId} after bulk update`,
+									"ItemHandler"
+								);
+							} catch (err) {
+								Logger.warn(
+									`Failed to invalidate cart cache for item ${itemId}: ${err}`,
+									"ItemHandler"
+								);
+							}
+						}
 					} catch (updateError) {
 						// If direct update fails, try the update using save
 						try {
@@ -892,6 +927,34 @@ export class ItemHandler {
 							`Successfully updated item: ${itemId}`,
 							"ItemHandler"
 						);
+
+						// Invalidate cart cache if price, stock, or discount changed
+						const priceChanged = variants?.update?.some(
+							(v) => v.price !== undefined
+						);
+						const stockChanged = variants?.update?.some(
+							(v) => v.stockQuantity !== undefined
+						);
+						const discountChanged = discount !== undefined;
+
+						if (
+							priceChanged ||
+							stockChanged ||
+							discountChanged ||
+							update?.name ||
+							update?.status
+						) {
+							try {
+								await CartService.invalidateCartCacheForItem(
+									itemId
+								);
+							} catch (err) {
+								Logger.warn(
+									`Failed to invalidate cart cache for item ${itemId}: ${err}`,
+									"ItemHandler"
+								);
+							}
+						}
 					} else {
 						results.skipped++;
 						results.errors.push({
@@ -994,6 +1057,19 @@ export class ItemHandler {
 				item.status = "discontinued";
 				await item.save({ session });
 
+				try {
+					await CartService.invalidateCartCacheForItem(itemId);
+					Logger.debug(
+						`Invalidated cart cache for item ${itemId} after status change to discontinued`,
+						"ItemHandler"
+					);
+				} catch (err) {
+					Logger.warn(
+						`Failed to invalidate cart cache for item ${itemId}: ${err}`,
+						"ItemHandler"
+					);
+				}
+
 				Logger.info(
 					`Item marked as discontinued: ${itemId}`,
 					"ItemHandler"
@@ -1008,6 +1084,20 @@ export class ItemHandler {
 			}
 
 			await Item.deleteOne({ _id: itemId }).session(session);
+
+			try {
+				await CartService.invalidateCartCacheForItem(itemId);
+				Logger.debug(
+					`Invalidated cart cache for item ${itemId} after deletion`,
+					"ItemHandler"
+				);
+			} catch (err) {
+				Logger.warn(
+					`Failed to invalidate cart cache for item ${itemId}: ${err}`,
+					"ItemHandler"
+				);
+			}
+
 			Logger.info(`Item deleted successfully: ${itemId}`, "ItemHandler");
 
 			return reply.send({
@@ -1538,6 +1628,24 @@ export class ItemHandler {
 
 			variant.stockQuantity += quantity;
 			await item.save({ session });
+
+			try {
+				// Invalidate cart cache specifically for this variant
+				await CartService.invalidateCartCacheForItem(
+					itemId,
+					variantSku
+				);
+				Logger.debug(
+					`Invalidated cart cache for item ${itemId}, variant ${variantSku} after stock update`,
+					"ItemHandler"
+				);
+			} catch (err) {
+				Logger.warn(
+					`Failed to invalidate cart cache for item ${itemId}: ${err}`,
+					"ItemHandler"
+				);
+				// Don't throw error - we still want to return successful stock update
+			}
 
 			Logger.info(
 				`Stock updated for item ${itemId}, variant ${variantSku}`,

@@ -5,6 +5,7 @@ import { Cart, ICart, ICartItem } from "../models/Cart";
 import { Item, IItem } from "../models/Item";
 import { Logger } from "../services/logger.service";
 import { createBusinessError } from "../utils/error-handler";
+import { withTransaction } from "../utils/transaction.utils";
 
 enum StockStatus {
 	IN_STOCK = "IN_STOCK",
@@ -25,12 +26,24 @@ interface StockChange {
 
 export default class CartService {
 	/**
-	 * Get or create a cart for a user
+	 * Get or create a cart for a user with transaction support
 	 */
-	static async getOrCreateCart(userId: string): Promise<ICart> {
+	static async getOrCreateCart(
+		userId: string,
+		session?: mongoose.ClientSession
+	): Promise<ICart> {
+		// If no session is provided, handle it internally
+		if (!session) {
+			return withTransaction(async (s) => {
+				return this.getOrCreateCart(userId, s);
+			}, "CartService");
+		}
+
 		const userObjectId = new mongoose.Types.ObjectId(userId);
 
-		let cart = await Cart.findOne({ userId: userObjectId });
+		let cart = await Cart.findOne({ userId: userObjectId }).session(
+			session
+		);
 
 		if (!cart) {
 			// Create a new cart for the user
@@ -38,12 +51,12 @@ export default class CartService {
 				userId: userObjectId,
 				items: [],
 			});
-			await cart.save();
+			await cart.save({ session });
 			Logger.debug(`Created new cart for user: ${userId}`, "CartService");
 		} else if (cart.isExpired()) {
 			// If cart exists but is expired, refresh it
 			cart.refreshExpiry();
-			await cart.save();
+			await cart.save({ session });
 			Logger.debug(
 				`Refreshed expired cart for user: ${userId}`,
 				"CartService"
@@ -60,9 +73,22 @@ export default class CartService {
 		userId: string,
 		itemId: string,
 		variantSku: string,
-		quantity: number
+		quantity: number,
+		session?: mongoose.ClientSession
 	): Promise<ICart> {
-		const cart = await this.getOrCreateCart(userId);
+		if (!session) {
+			return withTransaction(async (s) => {
+				return this.addItemToCart(
+					userId,
+					itemId,
+					variantSku,
+					quantity,
+					s
+				);
+			}, "CartService");
+		}
+
+		const cart = await this.getOrCreateCart(userId, session);
 
 		// Validate item and variant
 		const item = await this.validateItemAndVariant(itemId, variantSku);
@@ -115,8 +141,8 @@ export default class CartService {
 			});
 		}
 
-		// Save cart
-		await cart.save();
+		// Save cart with session
+		await cart.save({ session });
 
 		Logger.debug(
 			`Added item ${itemId} (${variantSku}) to cart for user: ${userId}`,
@@ -448,7 +474,7 @@ export default class CartService {
 	}
 
 	/**
-	 * Sync cart with current item data
+	 * Sync cart with current item data using aggregation pipeline
 	 */
 	static async syncCart(
 		userId: string,
@@ -467,179 +493,203 @@ export default class CartService {
 		};
 		itemDetails: Array<any>;
 	}> {
-		const cart = await this.getOrCreateCart(userId);
+		// Start with transaction for consistency
+		return withTransaction(async (session) => {
+			const cart = await this.getOrCreateCart(userId, session);
 
-		// Return empty data for empty cart
-		if (cart.items.length === 0) {
-			return {
-				cart,
-				totals: { subtotal: 0, totalItems: 0, totalQuantity: 0 },
-				itemDetails: [],
-			};
-		}
+			// Return empty data for empty cart
+			if (cart.items.length === 0) {
+				return {
+					cart,
+					totals: { subtotal: 0, totalItems: 0, totalQuantity: 0 },
+					itemDetails: [],
+				};
+			}
 
-		// Check if we have a recent sync and if we're not forcing a sync
-		const now = new Date().getTime();
-		const SYNC_CACHE_TTL = 60000; // 1 minute in milliseconds
-		if (
-			!forceSync &&
-			cart.lastSyncedAt &&
-			cart.syncData &&
-			now - cart.lastSyncedAt.getTime() < SYNC_CACHE_TTL
-		) {
-			Logger.debug(
-				`Using cached sync data for user: ${userId}`,
-				"CartService"
-			);
-			return cart.syncData;
-		}
+			// Check if we have a recent sync and if we're not forcing a sync
+			const now = new Date().getTime();
+			const SYNC_CACHE_TTL = 60000; // 1 minute in milliseconds
+			if (
+				!forceSync &&
+				cart.lastSyncedAt &&
+				cart.syncData &&
+				now - cart.lastSyncedAt.getTime() < SYNC_CACHE_TTL
+			) {
+				Logger.debug(
+					`Using cached sync data for user: ${userId}`,
+					"CartService"
+				);
+				return cart.syncData;
+			}
 
-		// Get all item IDs in the cart
-		const itemIds = Array.from(
-			new Set(cart.items.map((item) => item.itemId.toString()))
-		);
-
-		// Fetch all items in one query
-		const items = await Item.find({ _id: { $in: itemIds } });
-
-		const itemsMap = new Map<string, IItem>();
-		items.forEach((item) => {
-			// Handle the _id specifically
-			const id = (item._id as mongoose.Types.ObjectId).toString();
-			itemsMap.set(id, item as IItem);
-		});
-
-		let subtotal = 0;
-		const itemDetails: Array<any> = [];
-		const updatedCartItems: ICartItem[] = [];
-
-		// Process each cart item
-		for (const cartItem of cart.items) {
-			const itemId = cartItem.itemId.toString();
-			const item = itemsMap.get(itemId);
-
-			// Find the variant
-			const variant = item?.variants.find(
-				(v) => v.sku === cartItem.variantSku
+			// Get all item IDs in the cart
+			const itemIds = Array.from(
+				new Set(
+					cart.items.map(
+						(item) =>
+							new mongoose.Types.ObjectId(item.itemId.toString())
+					)
+				)
 			);
 
-			// Get detailed stock information
-			const stockInfo = this.getStockStatus(
-				item as IItem,
-				variant,
-				cartItem.quantity
-			);
+			// Use aggregation to get all items with their variants in one query
+			const itemsData = await Item.aggregate([
+				{
+					$match: { _id: { $in: itemIds } },
+				},
+				{
+					$project: {
+						_id: 1,
+						name: 1,
+						images: 1,
+						description: 1,
+						status: 1,
+						variants: 1,
+						discount: 1,
+					},
+				},
+			]).session(session);
 
-			// Calculate current price with discounts
-			let currentPrice = 0;
-			let discountPercentage = 0;
+			// Create a map for faster lookups
+			const itemsMap = new Map();
+			itemsData.forEach((item) => {
+				itemsMap.set(item._id.toString(), item);
+			});
 
-			if (variant) {
-				currentPrice = variant.price;
+			let subtotal = 0;
+			const itemDetails: Array<any> = [];
+			const updatedCartItems: ICartItem[] = [];
 
-				if (item && item.discount?.active) {
-					const now = new Date();
-					if (
-						now >= item.discount.startDate &&
-						now <= item.discount.endDate
-					) {
-						discountPercentage = item.discount.percentage;
-						currentPrice = Math.round(
-							currentPrice * (1 - discountPercentage / 100)
-						);
+			// Process each cart item
+			for (const cartItem of cart.items) {
+				const itemId = cartItem.itemId.toString();
+				const item = itemsMap.get(itemId);
+
+				// Find the variant
+				const variant = item?.variants.find(
+					(v: any) => v.sku === cartItem.variantSku
+				);
+
+				// Get detailed stock information
+				const stockInfo = this.getStockStatus(
+					item as IItem,
+					variant,
+					cartItem.quantity
+				);
+
+				// Calculate current price with discounts
+				let currentPrice = 0;
+				let discountPercentage = 0;
+
+				if (variant) {
+					currentPrice = variant.price;
+
+					if (item && item.discount?.active) {
+						const now = new Date();
+						if (
+							now >= item.discount.startDate &&
+							now <= item.discount.endDate
+						) {
+							discountPercentage = item.discount.percentage;
+							currentPrice = Math.round(
+								currentPrice * (1 - discountPercentage / 100)
+							);
+						}
 					}
 				}
+
+				// Determine if item is available for purchase
+				const isAvailable =
+					stockInfo.status === StockStatus.IN_STOCK ||
+					stockInfo.status === StockStatus.LOW_STOCK;
+
+				// Add to subtotal if available
+				const itemTotal = isAvailable
+					? currentPrice *
+					  Math.min(cartItem.quantity, stockInfo.currentQuantity)
+					: 0;
+
+				if (isAvailable) {
+					subtotal += itemTotal;
+				}
+
+				// Add item to details with enhanced stock information
+				itemDetails.push({
+					item: {
+						_id: item?._id || cartItem.itemId,
+						name: item?.name || "Item no longer available",
+						images: item?.images,
+						description: item?.description,
+						status: item?.status,
+					},
+					variant: variant
+						? {
+								sku: variant.sku,
+								specifications: variant.specifications,
+								price: variant.price,
+								stockQuantity: variant.stockQuantity,
+								effectivePrice: currentPrice,
+								discountPercentage,
+						  }
+						: { sku: cartItem.variantSku },
+					quantity: cartItem.quantity,
+					itemTotal: isAvailable ? itemTotal : 0,
+					isAvailable,
+					hasChanged:
+						stockInfo.status !== StockStatus.IN_STOCK ||
+						stockInfo.previousQuantity !==
+							stockInfo.currentQuantity,
+					stockStatus: stockInfo.status,
+					stockIssue: stockInfo.message,
+					quantityAdjusted:
+						stockInfo.adjustedQuantity !== undefined &&
+						stockInfo.adjustedQuantity !==
+							stockInfo.requestedQuantity,
+					suggestedQuantity: stockInfo.adjustedQuantity,
+				});
+
+				// Keep the item in the cart with possibly adjusted quantity
+				updatedCartItems.push({
+					...cartItem,
+					// If stock is less than quantity, don't update the cart item yet
+					// This allows user to see the issue and decide what to do
+				});
 			}
 
-			// Determine if item is available for purchase
-			const isAvailable =
-				stockInfo.status === StockStatus.IN_STOCK ||
-				stockInfo.status === StockStatus.LOW_STOCK;
+			// Calculate totals
+			const totalItems = updatedCartItems.length;
+			const totalQuantity = updatedCartItems.reduce(
+				(sum, item) => sum + item.quantity,
+				0
+			);
 
-			// Add to subtotal if available
-			const itemTotal = isAvailable
-				? currentPrice *
-				  Math.min(cartItem.quantity, stockInfo.currentQuantity)
-				: 0;
+			// Validate order value
+			const orderValueStatus = this.validateOrderValue(subtotal);
 
-			if (isAvailable) {
-				subtotal += itemTotal;
-			}
-
-			// Add item to details with enhanced stock information
-			itemDetails.push({
-				item: {
-					_id: item?._id || cartItem.itemId,
-					name: item?.name || "Item no longer available",
-					images: item?.images,
-					description: item?.description,
-					status: item?.status,
+			const result = {
+				cart,
+				totals: {
+					subtotal,
+					totalItems,
+					totalQuantity,
+					isOrderBelowMinimum: orderValueStatus.belowMinimum,
+					isOrderAboveMaximum: orderValueStatus.aboveMaximum,
+					minimumOrderValue: CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE,
+					maximumOrderValue: CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE,
+					orderMessage: orderValueStatus.message,
 				},
-				variant: variant
-					? {
-							sku: variant.sku,
-							specifications: variant.specifications,
-							price: variant.price,
-							stockQuantity: variant.stockQuantity,
-							effectivePrice: currentPrice,
-							discountPercentage,
-					  }
-					: { sku: cartItem.variantSku },
-				quantity: cartItem.quantity,
-				itemTotal: isAvailable ? itemTotal : 0,
-				isAvailable,
-				hasChanged:
-					stockInfo.status !== StockStatus.IN_STOCK ||
-					stockInfo.previousQuantity !== stockInfo.currentQuantity,
-				stockStatus: stockInfo.status,
-				stockIssue: stockInfo.message,
-				quantityAdjusted:
-					stockInfo.adjustedQuantity !== undefined &&
-					stockInfo.adjustedQuantity !== stockInfo.requestedQuantity,
-				suggestedQuantity: stockInfo.adjustedQuantity,
-			});
+				itemDetails,
+			};
 
-			// Keep the item in the cart with possibly adjusted quantity
-			updatedCartItems.push({
-				...cartItem,
-				// If stock is less than quantity, don't update the cart item yet
-				// This allows user to see the issue and decide what to do
-			});
-		}
+			// Cache the sync result
+			cart.lastSyncedAt = new Date();
+			cart.syncData = result;
+			await cart.save({ session });
 
-		// Calculate totals
-		const totalItems = updatedCartItems.length;
-		const totalQuantity = updatedCartItems.reduce(
-			(sum, item) => sum + item.quantity,
-			0
-		);
+			Logger.debug(`Synced cart for user: ${userId}`, "CartService");
 
-		// Validate order value
-		const orderValueStatus = this.validateOrderValue(subtotal);
-
-		const result = {
-			cart,
-			totals: {
-				subtotal,
-				totalItems,
-				totalQuantity,
-				isOrderBelowMinimum: orderValueStatus.belowMinimum,
-				isOrderAboveMaximum: orderValueStatus.aboveMaximum,
-				minimumOrderValue: CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE,
-				maximumOrderValue: CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE,
-				orderMessage: orderValueStatus.message,
-			},
-			itemDetails,
-		};
-
-		// Cache the sync result
-		cart.lastSyncedAt = new Date();
-		cart.syncData = result;
-		await cart.save();
-
-		Logger.debug(`Synced cart for user: ${userId}`, "CartService");
-
-		return result;
+			return result;
+		}, "CartService");
 	}
 
 	/**
@@ -728,6 +778,44 @@ export default class CartService {
 			belowMinimum: false,
 			aboveMaximum: false,
 		};
+	}
+
+	/**
+	 * Invalidate cart cache for all carts containing a specific item
+	 * Call this method whenever an item's price, stock, or discount changes
+	 */
+	static async invalidateCartCacheForItem(
+		itemId: string,
+		variantSku?: string
+	): Promise<void> {
+		return withTransaction(async (session) => {
+			const query: any = {};
+
+			if (variantSku) {
+				// If variant is specified, only invalidate carts with that specific variant
+				query["items.itemId"] = new mongoose.Types.ObjectId(itemId);
+				query["items.variantSku"] = variantSku;
+			} else {
+				// Otherwise invalidate all carts containing the item
+				query["items.itemId"] = new mongoose.Types.ObjectId(itemId);
+			}
+
+			// Set lastSyncedAt to null for affected carts to force resync
+			const updateResult = await Cart.updateMany(
+				query,
+				{ $set: { lastSyncedAt: null } },
+				{ session }
+			);
+
+			Logger.debug(
+				`Invalidated cache for ${
+					updateResult.modifiedCount
+				} carts containing item ${itemId}${
+					variantSku ? ` (variant: ${variantSku})` : ""
+				}`,
+				"CartService"
+			);
+		}, "CartService");
 	}
 
 	/**

@@ -9,6 +9,7 @@ import {
 	createBusinessError,
 } from "../../../../utils/error-handler";
 import { withTransaction } from "../../../../utils/transaction.utils";
+import CartService from "@/services/cart.service";
 
 interface SupplierFilters {
 	search?: string;
@@ -152,6 +153,34 @@ export class SupplierHandler {
 
 			if (!supplier) {
 				throw CommonErrors.supplierNotFound();
+			}
+
+			// If supplier status changed, invalidate related item carts
+			if (updateData.status && updateData.status !== supplier.status) {
+				try {
+					// Find all items from this supplier
+					const supplierItems = await Item.find(
+						{ supplier: supplierId },
+						{ _id: 1 }
+					).session(session);
+
+					// Invalidate carts for each item
+					for (const item of supplierItems) {
+						await CartService.invalidateCartCacheForItem(
+							(item._id as mongoose.Types.ObjectId).toString()
+						);
+					}
+
+					Logger.debug(
+						`Invalidated cart cache for ${supplierItems.length} items after supplier status change`,
+						"SupplierHandler"
+					);
+				} catch (err) {
+					Logger.warn(
+						`Failed to invalidate cart caches after supplier status change: ${err}`,
+						"SupplierHandler"
+					);
+				}
 			}
 
 			Logger.info(
