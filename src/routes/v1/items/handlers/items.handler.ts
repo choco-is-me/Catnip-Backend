@@ -1,12 +1,20 @@
 // src/routes/v1/items/handlers/item.handler.ts
+import CartService from "@/services/cart.service";
 import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
+import { CONFIG } from "../../../../config/index";
+import {
+	CURRENCY_CONSTANTS,
+	formatVNDPrice,
+	validateVNDPrice,
+} from "../../../../constants/currency.constants";
 import { IItem, Item, IVariant } from "../../../../models/Item";
 import { Supplier } from "../../../../models/Supplier";
 import {
 	BulkCreateItemBody,
 	BulkItemUpdateBody,
+	ItemSortField,
 } from "../../../../schemas/items";
 import { Logger } from "../../../../services/logger.service";
 import {
@@ -14,14 +22,6 @@ import {
 	createBusinessError,
 } from "../../../../utils/error-handler";
 import { withTransaction } from "../../../../utils/transaction.utils";
-import { ItemSortField } from "../../../../schemas/items";
-import {
-	CURRENCY_CONSTANTS,
-	formatVNDPrice,
-	validateVNDPrice,
-} from "../../../../constants/currency.constants";
-import { CONFIG } from "../../../../config/index";
-import CartService from "@/services/cart.service";
 
 export class ItemHandler {
 	// Validation methods as static

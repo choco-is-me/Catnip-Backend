@@ -1,11 +1,11 @@
 // src/models/Item.ts
 import mongoose, { Document, Schema } from "mongoose";
-import { Logger } from "../services/logger.service";
 import {
 	CURRENCY_CONSTANTS,
-	validateVNDPrice,
 	formatVNDPrice,
+	validateVNDPrice,
 } from "../constants/currency.constants";
+import { Logger } from "../services/logger.service";
 
 // Interface for dynamic specifications
 export interface ISpecification {

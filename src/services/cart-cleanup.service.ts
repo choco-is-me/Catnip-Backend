@@ -1,5 +1,4 @@
 // src/services/cart-cleanup.service.ts
-import mongoose from "mongoose";
 import { Cart } from "../models/Cart";
 import { Logger } from "./logger.service";
 

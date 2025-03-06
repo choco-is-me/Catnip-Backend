@@ -1,8 +1,8 @@
 // src/utils/optimistic-locking.utils.ts
 
 import { Document, Model } from "mongoose";
-import { createError, ErrorTypes } from "./error-handler";
 import { Logger } from "../services/logger.service";
+import { createError, ErrorTypes } from "./error-handler";
 
 export class OptimisticLockingError extends Error {
 	constructor(message: string) {

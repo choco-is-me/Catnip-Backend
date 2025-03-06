@@ -1,4 +1,5 @@
 // src/routes/v1/suppliers/handlers/suppliers.handler.ts
+import CartService from "@/services/cart.service";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
 import { Item } from "../../../../models/Item";
@@ -9,7 +10,6 @@ import {
 	createBusinessError,
 } from "../../../../utils/error-handler";
 import { withTransaction } from "../../../../utils/transaction.utils";
-import CartService from "@/services/cart.service";
 
 interface SupplierFilters {
 	search?: string;

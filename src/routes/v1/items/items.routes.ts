@@ -7,7 +7,6 @@ import {
 	BulkItemUpdateBody,
 	BulkItemUpdateResponse,
 	ErrorResponseSchema,
-	SingleItemResponseSchema,
 	StockUpdateResponseSchema,
 	UpdateStockBody,
 } from "../../../schemas";

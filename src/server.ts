@@ -12,10 +12,10 @@ import authPlugin from "./middlewares/auth";
 import rbacPlugin from "./middlewares/rbac";
 import dbPlugin from "./plugins/mongodb";
 import modifierRoutes from "./routes/v1";
+import { CartCleanupService } from "./services/cart-cleanup.service";
 import { Logger } from "./services/logger.service";
 import { TokenCleanupService } from "./services/token-cleanup.service";
 import { handleError } from "./utils/error-handler";
-import { CartCleanupService } from "./services/cart-cleanup.service";
 
 export async function buildServer(): Promise<FastifyInstance> {
 	// Create Fastify instance with logger disabled
