@@ -1,17 +1,24 @@
 // src/services/cart.service.ts
 import mongoose from "mongoose";
-import { CURRENCY_CONSTANTS } from "../constants/currency.constants";
+import {
+	CURRENCY_CONSTANTS,
+	formatVNDPrice,
+} from "../constants/currency.constants";
 import { Cart, ICart, ICartItem } from "../models/Cart";
 import { Item, IItem } from "../models/Item";
 import { Logger } from "../services/logger.service";
 import { createBusinessError } from "../utils/error-handler";
 import { withTransaction } from "../utils/transaction.utils";
+import { CartItemDetail, CartSyncResponse } from "../types/cart.types";
 
 enum StockStatus {
 	IN_STOCK = "IN_STOCK",
 	LOW_STOCK = "LOW_STOCK",
 	OUT_OF_STOCK = "OUT_OF_STOCK",
 	DISCONTINUED = "DISCONTINUED",
+	VARIANT_UNAVAILABLE = "VARIANT_UNAVAILABLE",
+	ITEM_UNAVAILABLE = "ITEM_UNAVAILABLE",
+	PRICE_CHANGED = "PRICE_CHANGED",
 	UNKNOWN = "UNKNOWN",
 }
 
@@ -22,6 +29,12 @@ interface StockChange {
 	requestedQuantity: number;
 	adjustedQuantity?: number;
 	message?: string;
+	severity: "info" | "warning" | "error";
+	actionRequired: boolean;
+	recommendation?: string;
+	previousPrice?: number;
+	currentPrice?: number;
+	priceChanged?: boolean;
 }
 
 export default class CartService {
@@ -350,7 +363,7 @@ export default class CartService {
 	}
 
 	/**
-	 * Change item variant in the cart
+	 * Change item variant in the cart with an optimized approach using a single update operation
 	 */
 	static async changeVariant(
 		userId: string,
@@ -358,68 +371,88 @@ export default class CartService {
 		currentVariantSku: string,
 		newVariantSku: string
 	): Promise<ICart> {
-		const cart = await this.getOrCreateCart(userId);
+		return withTransaction(async (session) => {
+			const cart = await this.getOrCreateCart(userId, session);
 
-		// Find the item in the cart
-		const existingItemIndex = cart.items.findIndex(
-			(item) =>
-				item.itemId.toString() === itemId &&
-				item.variantSku === currentVariantSku
-		);
-
-		if (existingItemIndex === -1) {
-			throw createBusinessError("Item not found in cart");
-		}
-
-		const currentQuantity = cart.items[existingItemIndex].quantity;
-
-		// Validate item and new variant
-		const item = await this.validateItemAndVariant(itemId, newVariantSku);
-		const variant = this.getVariant(item, newVariantSku);
-
-		// Check stock for new variant
-		if (variant.stockQuantity < currentQuantity) {
-			throw createBusinessError(
-				`Cannot change variant. Only ${variant.stockQuantity} items in stock for new variant`
+			// Validate current variant exists in cart
+			const existingItemIndex = cart.items.findIndex(
+				(item) =>
+					item.itemId.toString() === itemId &&
+					item.variantSku === currentVariantSku
 			);
-		}
 
-		// Check if the new variant is already in the cart
-		const newVariantIndex = cart.items.findIndex(
-			(item) =>
-				item.itemId.toString() === itemId &&
-				item.variantSku === newVariantSku
-		);
+			if (existingItemIndex === -1) {
+				throw createBusinessError("Item not found in cart");
+			}
 
-		if (newVariantIndex !== -1) {
-			// Combine quantities
-			cart.items[newVariantIndex].quantity += currentQuantity;
+			// Get current quantity before any changes
+			const currentQuantity = cart.items[existingItemIndex].quantity;
 
-			// Remove the old item
-			cart.items.splice(existingItemIndex, 1);
+			// Validate item and new variant
+			const item = await this.validateItemAndVariant(
+				itemId,
+				newVariantSku
+			);
+			const variant = this.getVariant(item, newVariantSku);
 
-			// Check combined quantity against stock
-			if (cart.items[newVariantIndex].quantity > variant.stockQuantity) {
+			// Check stock for new variant
+			if (variant.stockQuantity < currentQuantity) {
 				throw createBusinessError(
-					`Cannot change variant. Combined quantity would exceed stock`
+					`Cannot change variant. Only ${variant.stockQuantity} items in stock for new variant`
 				);
 			}
 
-			cart.items[newVariantIndex].updatedAt = new Date();
-		} else {
-			// Just update the variant SKU
-			cart.items[existingItemIndex].variantSku = newVariantSku;
-			cart.items[existingItemIndex].updatedAt = new Date();
-		}
+			// Check if the new variant is already in the cart
+			const newVariantIndex = cart.items.findIndex(
+				(item) =>
+					item.itemId.toString() === itemId &&
+					item.variantSku === newVariantSku
+			);
 
-		// Save cart
-		await cart.save();
-		Logger.debug(
-			`Changed variant from ${currentVariantSku} to ${newVariantSku} for item ${itemId} in cart for user: ${userId}`,
-			"CartService"
-		);
+			// Use a single update operation with atomic modifications
+			if (newVariantIndex !== -1) {
+				// Case: New variant already exists in cart - combine quantities with a single update
 
-		return cart;
+				// First, calculate the new total quantity
+				const newTotalQuantity =
+					cart.items[newVariantIndex].quantity + currentQuantity;
+
+				// Check if the combined quantity exceeds stock
+				if (newTotalQuantity > variant.stockQuantity) {
+					throw createBusinessError(
+						`Cannot change variant. Combined quantity (${newTotalQuantity}) would exceed available stock (${variant.stockQuantity})`
+					);
+				}
+
+				// Update the existing entry with new variant
+				cart.items[newVariantIndex].quantity = newTotalQuantity;
+				cart.items[newVariantIndex].updatedAt = new Date();
+
+				// Remove the old variant in a single operation
+				cart.items.splice(existingItemIndex, 1);
+
+				Logger.debug(
+					`Combined quantities for item ${itemId}, changing variant from ${currentVariantSku} to existing ${newVariantSku}`,
+					"CartService"
+				);
+			} else {
+				// Case: New variant doesn't exist - modify existing entry in place
+
+				// Update the current item entry with new variant details
+				cart.items[existingItemIndex].variantSku = newVariantSku;
+				cart.items[existingItemIndex].updatedAt = new Date();
+
+				Logger.debug(
+					`Changed variant from ${currentVariantSku} to ${newVariantSku} for item ${itemId}`,
+					"CartService"
+				);
+			}
+
+			// Save cart
+			await cart.save({ session });
+
+			return cart;
+		}, "CartService");
 	}
 
 	/**
@@ -476,23 +509,12 @@ export default class CartService {
 	/**
 	 * Sync cart with current item data using aggregation pipeline
 	 */
+	// Optimized syncCart method for CartService
 	static async syncCart(
 		userId: string,
-		forceSync: boolean = false
-	): Promise<{
-		cart: ICart;
-		totals: {
-			subtotal: number;
-			totalItems: number;
-			totalQuantity: number;
-			isOrderBelowMinimum?: boolean;
-			isOrderAboveMaximum?: boolean;
-			minimumOrderValue?: number;
-			maximumOrderValue?: number;
-			orderMessage?: string;
-		};
-		itemDetails: Array<any>;
-	}> {
+		forceSync: boolean = false,
+		itemIds?: string[] // Optional parameter to only sync specific items
+	): Promise<CartSyncResponse> {
 		// Start with transaction for consistency
 		return withTransaction(async (session) => {
 			const cart = await this.getOrCreateCart(userId, session);
@@ -509,12 +531,50 @@ export default class CartService {
 			// Check if we have a recent sync and if we're not forcing a sync
 			const now = new Date().getTime();
 			const SYNC_CACHE_TTL = 60000; // 1 minute in milliseconds
-			if (
-				!forceSync &&
+
+			// Check cache invalidation flag
+			const cacheValid =
 				cart.lastSyncedAt &&
 				cart.syncData &&
-				now - cart.lastSyncedAt.getTime() < SYNC_CACHE_TTL
-			) {
+				now - cart.lastSyncedAt.getTime() < SYNC_CACHE_TTL &&
+				!forceSync;
+
+			// If specific itemIds are provided, we need to check if they're in the cached data
+			if (cacheValid && itemIds && itemIds.length > 0) {
+				const cachedItemIds = new Set(
+					cart.syncData.itemDetails.map((detail: CartItemDetail) =>
+						detail.item._id.toString()
+					)
+				);
+				const allItemsInCache = itemIds.every((id) =>
+					cachedItemIds.has(id)
+				);
+
+				// If all requested items are in cache, we can use the cached data
+				if (allItemsInCache) {
+					Logger.debug(
+						`Using cached sync data for user: ${userId} (partial sync)`,
+						"CartService"
+					);
+
+					// If we only need specific items, filter the cache
+					if (itemIds.length < cachedItemIds.size) {
+						const filteredDetails =
+							cart.syncData.itemDetails.filter(
+								(detail: CartItemDetail) =>
+									itemIds.includes(detail.item._id.toString())
+							);
+
+						// Return filtered data with same totals
+						return {
+							...cart.syncData,
+							itemDetails: filteredDetails,
+						};
+					}
+
+					return cart.syncData;
+				}
+			} else if (cacheValid) {
 				Logger.debug(
 					`Using cached sync data for user: ${userId}`,
 					"CartService"
@@ -522,30 +582,32 @@ export default class CartService {
 				return cart.syncData;
 			}
 
-			// Get all item IDs in the cart
-			const itemIds = Array.from(
+			// Get all item IDs in the cart or use the provided ones
+			const cartItemIds = cart.items.map((item) =>
+				item.itemId.toString()
+			);
+			const targetItemIds = itemIds || cartItemIds;
+
+			// Create ObjectId references for lookup
+			const itemIdsToFetch = Array.from(
 				new Set(
-					cart.items.map(
-						(item) =>
-							new mongoose.Types.ObjectId(item.itemId.toString())
-					)
+					targetItemIds.map((id) => new mongoose.Types.ObjectId(id))
 				)
 			);
 
-			// Use aggregation to get all items with their variants in one query
+			// Use lean queries and specific projections to reduce data transfer
 			const itemsData = await Item.aggregate([
 				{
-					$match: { _id: { $in: itemIds } },
+					$match: { _id: { $in: itemIdsToFetch } },
 				},
 				{
 					$project: {
 						_id: 1,
 						name: 1,
-						images: 1,
-						description: 1,
-						status: 1,
+						images: { $slice: ["$images", 1] }, // Only get first image
 						variants: 1,
 						discount: 1,
+						status: 1,
 					},
 				},
 			]).session(session);
@@ -557,12 +619,26 @@ export default class CartService {
 			});
 
 			let subtotal = 0;
-			const itemDetails: Array<any> = [];
+			const itemDetails: CartItemDetail[] = [];
 			const updatedCartItems: ICartItem[] = [];
+			const stockIssues: Array<{
+				itemId: string;
+				variantSku: string;
+				issue: string;
+				severity?: "info" | "warning" | "error";
+				actionRequired?: boolean;
+				recommendation?: string;
+			}> = [];
 
 			// Process each cart item
 			for (const cartItem of cart.items) {
 				const itemId = cartItem.itemId.toString();
+
+				// Skip items not in our target list if we're doing a partial sync
+				if (!targetItemIds.includes(itemId)) {
+					continue;
+				}
+
 				const item = itemsMap.get(itemId);
 
 				// Find the variant
@@ -603,6 +679,18 @@ export default class CartService {
 					stockInfo.status === StockStatus.IN_STOCK ||
 					stockInfo.status === StockStatus.LOW_STOCK;
 
+				// Track stock issues
+				if (
+					!isAvailable ||
+					stockInfo.currentQuantity < cartItem.quantity
+				) {
+					stockIssues.push({
+						itemId,
+						variantSku: cartItem.variantSku,
+						issue: stockInfo.message || "Stock issue detected",
+					});
+				}
+
 				// Add to subtotal if available
 				const itemTotal = isAvailable
 					? currentPrice *
@@ -619,7 +707,6 @@ export default class CartService {
 						_id: item?._id || cartItem.itemId,
 						name: item?.name || "Item no longer available",
 						images: item?.images,
-						description: item?.description,
 						status: item?.status,
 					},
 					variant: variant
@@ -651,8 +738,6 @@ export default class CartService {
 				// Keep the item in the cart with possibly adjusted quantity
 				updatedCartItems.push({
 					...cartItem,
-					// If stock is less than quantity, don't update the cart item yet
-					// This allows user to see the issue and decide what to do
 				});
 			}
 
@@ -679,6 +764,7 @@ export default class CartService {
 					orderMessage: orderValueStatus.message,
 				},
 				itemDetails,
+				stockIssues: stockIssues.length > 0 ? stockIssues : undefined,
 			};
 
 			// Cache the sync result
@@ -747,28 +833,39 @@ export default class CartService {
 		belowMinimum: boolean;
 		aboveMaximum: boolean;
 		message?: string;
+		shortfall?: number;
+		excess?: number;
 	} {
 		// Check minimum order value
 		if (subtotal < CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE) {
+			const shortfall =
+				CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE - subtotal;
 			return {
 				isValid: false,
 				belowMinimum: true,
 				aboveMaximum: false,
-				message: CURRENCY_CONSTANTS.ERRORS.MIN_ORDER(
-					CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE
-				),
+				message: `Your order total is ${formatVNDPrice(
+					subtotal
+				)}, which is below our minimum order value. Please add items worth at least ${formatVNDPrice(
+					shortfall
+				)} more to proceed.`,
+				shortfall,
 			};
 		}
 
 		// Check maximum order value
 		if (subtotal > CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE) {
+			const excess = subtotal - CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE;
 			return {
 				isValid: false,
 				belowMinimum: false,
 				aboveMaximum: true,
-				message: CURRENCY_CONSTANTS.ERRORS.MAX_ORDER(
+				message: `Your order total exceeds our maximum order value of ${formatVNDPrice(
 					CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE
-				),
+				)}. Please reduce your order by at least ${formatVNDPrice(
+					excess
+				)}.`,
+				excess,
 			};
 		}
 
@@ -823,29 +920,35 @@ export default class CartService {
 	 * and calculates if the order can be placed
 	 */
 	static async getOrderableItems(userId: string): Promise<{
-		availableItems: Array<any>;
-		unavailableItems: Array<any>;
+		availableItems: CartItemDetail[];
+		unavailableItems: CartItemDetail[];
 		subtotal: number;
 		orderValueStatus: {
 			isValid: boolean;
 			belowMinimum: boolean;
 			aboveMaximum: boolean;
 			message?: string;
+			shortfall?: number;
+			excess?: number;
 		};
 	}> {
 		// Sync the cart first to get current data
 		const syncResult = await this.syncCart(userId, true);
 
-		// Split items into available and unavailable
+		// Split items into available and unavailable with proper null checks
 		const availableItems = syncResult.itemDetails.filter(
 			(detail) =>
 				detail.isAvailable &&
+				// Check if stockQuantity exists and is sufficient
+				detail.variant.stockQuantity !== undefined &&
 				detail.variant.stockQuantity >= detail.quantity
 		);
 
 		const unavailableItems = syncResult.itemDetails.filter(
 			(detail) =>
 				!detail.isAvailable ||
+				// Check if stockQuantity is undefined or insufficient
+				detail.variant.stockQuantity === undefined ||
 				detail.variant.stockQuantity < detail.quantity
 		);
 
@@ -866,32 +969,114 @@ export default class CartService {
 		};
 	}
 
-	// Add this helper method to get item stock status
+	// Helper method to calculate effective price with discounts
+	private static calculateEffectivePrice(item: IItem, variant: any): number {
+		if (!variant) return 0;
+
+		let currentPrice = variant.price;
+
+		if (item && item.discount?.active) {
+			const now = new Date();
+			if (
+				now >= item.discount.startDate &&
+				now <= item.discount.endDate
+			) {
+				currentPrice = Math.round(
+					currentPrice * (1 - item.discount.percentage / 100)
+				);
+			}
+		}
+
+		return currentPrice;
+	}
+
+	// Helper method to get stock status for an item and variant
 	private static getStockStatus(
 		item: IItem,
 		variant: any,
-		requestedQuantity: number
+		requestedQuantity: number,
+		previousPrice?: number
 	): StockChange {
-		if (!item || item.status !== "active") {
+		// Item not found or discontinued
+		if (!item) {
+			return {
+				status: StockStatus.ITEM_UNAVAILABLE,
+				previousQuantity: 0,
+				currentQuantity: 0,
+				requestedQuantity,
+				message: "Item is no longer available in our catalog",
+				severity: "error",
+				actionRequired: true,
+				recommendation: "Please remove this item from your cart",
+			};
+		}
+
+		if (item.status !== "active") {
 			return {
 				status: StockStatus.DISCONTINUED,
 				previousQuantity: 0,
 				currentQuantity: 0,
 				requestedQuantity,
-				message: "Item is no longer available",
+				message: `This item is no longer available (Status: ${item.status})`,
+				severity: "error",
+				actionRequired: true,
+				recommendation:
+					"This item has been discontinued. Please remove it from your cart.",
 			};
 		}
 
+		// Variant not found
 		if (!variant) {
 			return {
-				status: StockStatus.UNKNOWN,
+				status: StockStatus.VARIANT_UNAVAILABLE,
 				previousQuantity: 0,
 				currentQuantity: 0,
 				requestedQuantity,
-				message: "Variant is no longer available",
+				message: "This variant is no longer available",
+				severity: "error",
+				actionRequired: true,
+				recommendation:
+					"This product variant is no longer offered. Please select a different variant or remove this item.",
 			};
 		}
 
+		// Check for price changes if previous price is provided
+		if (previousPrice !== undefined) {
+			const currentPrice = this.calculateEffectivePrice(item, variant);
+			const priceChanged = previousPrice !== currentPrice;
+
+			if (priceChanged) {
+				// Return price change information along with stock info
+				const priceDifference = currentPrice - previousPrice;
+				const percentChange = (
+					(priceDifference / previousPrice) *
+					100
+				).toFixed(1);
+				const direction =
+					priceDifference > 0 ? "increased" : "decreased";
+
+				return {
+					status: StockStatus.PRICE_CHANGED,
+					previousQuantity: requestedQuantity,
+					currentQuantity: variant.stockQuantity,
+					requestedQuantity,
+					message: `Price has ${direction} by ${Math.abs(
+						priceDifference
+					).toLocaleString()} VND (${Math.abs(
+						parseFloat(percentChange)
+					)}%)`,
+					severity: "info",
+					actionRequired: false,
+					recommendation:
+						"Please review the updated price before proceeding",
+					previousPrice,
+					currentPrice,
+					priceChanged: true,
+				};
+			}
+		}
+
+		// Out of stock
 		if (variant.stockQuantity === 0) {
 			return {
 				status: StockStatus.OUT_OF_STOCK,
@@ -899,10 +1084,14 @@ export default class CartService {
 				currentQuantity: 0,
 				requestedQuantity,
 				adjustedQuantity: 0,
-				message: "Item is out of stock",
+				message: "This item is currently out of stock",
+				severity: "error",
+				actionRequired: true,
+				recommendation: "Please remove this item or save it for later",
 			};
 		}
 
+		// Quantity requested exceeds available stock
 		if (variant.stockQuantity < requestedQuantity) {
 			return {
 				status: StockStatus.LOW_STOCK,
@@ -910,11 +1099,14 @@ export default class CartService {
 				currentQuantity: variant.stockQuantity,
 				requestedQuantity,
 				adjustedQuantity: variant.stockQuantity,
-				message: `Only ${variant.stockQuantity} items available`,
+				message: `Only ${variant.stockQuantity} items available (you requested ${requestedQuantity})`,
+				severity: "warning",
+				actionRequired: true,
+				recommendation: `Please reduce quantity to ${variant.stockQuantity} or fewer units`,
 			};
 		}
 
-		// Check if the variant has a low stock threshold
+		// Low stock warning
 		if (
 			variant.lowStockThreshold &&
 			variant.stockQuantity <= variant.lowStockThreshold
@@ -924,15 +1116,21 @@ export default class CartService {
 				previousQuantity: requestedQuantity,
 				currentQuantity: variant.stockQuantity,
 				requestedQuantity,
-				message: `Only ${variant.stockQuantity} items left`,
+				message: `Only ${variant.stockQuantity} items left in stock`,
+				severity: "warning",
+				actionRequired: false,
+				recommendation: "Consider completing your purchase soon",
 			};
 		}
 
+		// Normal in-stock status
 		return {
 			status: StockStatus.IN_STOCK,
 			previousQuantity: requestedQuantity,
 			currentQuantity: variant.stockQuantity,
 			requestedQuantity,
+			severity: "info",
+			actionRequired: false,
 		};
 	}
 }

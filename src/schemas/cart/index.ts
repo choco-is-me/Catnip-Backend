@@ -2,6 +2,24 @@
 import { Type } from "@sinclair/typebox";
 import { ResponseWrapper } from "../common";
 
+const StockStatusEnum = Type.Union([
+	Type.Literal("IN_STOCK"),
+	Type.Literal("LOW_STOCK"),
+	Type.Literal("OUT_OF_STOCK"),
+	Type.Literal("DISCONTINUED"),
+	Type.Literal("VARIANT_UNAVAILABLE"),
+	Type.Literal("ITEM_UNAVAILABLE"),
+	Type.Literal("PRICE_CHANGED"),
+	Type.Literal("UNKNOWN"),
+]);
+
+// Enhanced severity enum for documentation
+const SeverityEnum = Type.Union([
+	Type.Literal("info"),
+	Type.Literal("warning"),
+	Type.Literal("error"),
+]);
+
 // Cart item schema for responses
 const CartItemSchema = Type.Object({
 	itemId: Type.String({
@@ -137,6 +155,9 @@ export const CartSyncResponseSchema = ResponseWrapper(
 			isOrderAboveMaximum: Type.Optional(Type.Boolean()),
 			minimumOrderValue: Type.Optional(Type.Number()),
 			maximumOrderValue: Type.Optional(Type.Number()),
+			orderMessage: Type.Optional(Type.String()),
+			shortfall: Type.Optional(Type.Number()),
+			excess: Type.Optional(Type.Number()),
 		}),
 		itemDetails: Type.Array(
 			Type.Object({
@@ -161,8 +182,29 @@ export const CartSyncResponseSchema = ResponseWrapper(
 				itemTotal: Type.Number(),
 				isAvailable: Type.Boolean(),
 				hasChanged: Type.Boolean(),
+				stockStatus: Type.Optional(StockStatusEnum),
 				stockIssue: Type.Optional(Type.String()),
+				quantityAdjusted: Type.Optional(Type.Boolean()),
+				suggestedQuantity: Type.Optional(Type.Number()),
+				severity: Type.Optional(SeverityEnum),
+				actionRequired: Type.Optional(Type.Boolean()),
+				recommendation: Type.Optional(Type.String()),
+				priceChanged: Type.Optional(Type.Boolean()),
+				previousPrice: Type.Optional(Type.Number()),
+				currentPrice: Type.Optional(Type.Number()),
 			})
+		),
+		stockIssues: Type.Optional(
+			Type.Array(
+				Type.Object({
+					itemId: Type.String(),
+					variantSku: Type.String(),
+					issue: Type.String(),
+					severity: Type.Optional(SeverityEnum),
+					actionRequired: Type.Optional(Type.Boolean()),
+					recommendation: Type.Optional(Type.String()),
+				})
+			)
 		),
 	})
 );
