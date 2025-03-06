@@ -69,7 +69,7 @@ const CartSchema = new Schema<ICart>(
 			type: Schema.Types.ObjectId,
 			ref: "User",
 			required: true,
-			unique: true, // One cart per user
+			// Remove the unique: true from here, will define it with index() below
 		},
 		items: [CartItemSchema],
 		lastActivity: {
@@ -95,10 +95,6 @@ const CartSchema = new Schema<ICart>(
 		timestamps: true,
 	}
 );
-
-// Add indexes for better performance
-CartSchema.index({ userId: 1 }, { unique: true });
-CartSchema.index({ expires: 1 });
 
 // Add methods to the schema
 CartSchema.methods.getItem = function (
@@ -142,6 +138,8 @@ CartSchema.pre("save", function (next) {
 	next();
 });
 
+// Add indexes for better performance
+CartSchema.index({ userId: 1 }, { unique: true });
 // Create a TTL index to automatically remove expired carts
 CartSchema.index({ expires: 1 }, { expireAfterSeconds: 0 });
 

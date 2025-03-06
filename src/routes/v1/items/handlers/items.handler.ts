@@ -1,5 +1,5 @@
 // src/routes/v1/items/handlers/item.handler.ts
-import CartService from "@/services/cart.service";
+import CartService from "../../../../services/cart.service";
 import { Static } from "@sinclair/typebox";
 import { FastifyReply, FastifyRequest } from "fastify";
 import mongoose from "mongoose";
