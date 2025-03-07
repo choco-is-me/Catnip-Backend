@@ -286,14 +286,29 @@ export default class CartService {
 					variantSku: item.variantSku,
 				});
 			} catch (error) {
+				// Improved error handling
+				let errorMessage = "Unknown error";
+
+				// Handle business errors
+				if (error && typeof error === "object") {
+					if (
+						"message" in error &&
+						typeof error.message === "string"
+					) {
+						errorMessage = error.message;
+					} else if (
+						"error" in error &&
+						typeof error.error === "string"
+					) {
+						errorMessage = error.error;
+					}
+				}
+
 				results.push({
 					success: false,
 					itemId: item.itemId,
 					variantSku: item.variantSku,
-					message:
-						error instanceof Error
-							? error.message
-							: "Unknown error",
+					message: errorMessage,
 				});
 			}
 		}
@@ -322,14 +337,25 @@ export default class CartService {
 		const cart = await this.getOrCreateCart(userId);
 
 		// Find the item in the cart
-		const existingItemIndex = cart.items.findIndex(
+		const existingItem = cart.items.find(
 			(item) =>
 				item.itemId.toString() === itemId &&
 				item.variantSku === variantSku
 		);
 
-		if (existingItemIndex === -1) {
-			throw createBusinessError("Item not found in cart");
+		if (!existingItem) {
+			// Check if the item exists in cart but with different variant
+			const itemExists = cart.items.some(
+				(item) => item.itemId.toString() === itemId
+			);
+
+			if (itemExists) {
+				throw createBusinessError(
+					`Variant ${variantSku} not found in cart for this item`
+				);
+			} else {
+				throw createBusinessError("Item not found in cart");
+			}
 		}
 
 		// Validate item still exists and check stock
@@ -338,7 +364,13 @@ export default class CartService {
 
 		if (quantity <= 0) {
 			// Remove the item if quantity is 0 or negative
-			cart.items.splice(existingItemIndex, 1);
+			cart.items = cart.items.filter(
+				(item) =>
+					!(
+						item.itemId.toString() === itemId &&
+						item.variantSku === variantSku
+					)
+			);
 		} else {
 			// Check stock
 			if (variant.stockQuantity < quantity) {
@@ -348,8 +380,8 @@ export default class CartService {
 			}
 
 			// Update quantity
-			cart.items[existingItemIndex].quantity = quantity;
-			cart.items[existingItemIndex].updatedAt = new Date();
+			existingItem.quantity = quantity;
+			existingItem.updatedAt = new Date();
 		}
 
 		// Save cart
@@ -375,18 +407,31 @@ export default class CartService {
 			const cart = await this.getOrCreateCart(userId, session);
 
 			// Validate current variant exists in cart
-			const existingItemIndex = cart.items.findIndex(
+			const existingItem = cart.items.find(
 				(item) =>
 					item.itemId.toString() === itemId &&
 					item.variantSku === currentVariantSku
 			);
 
-			if (existingItemIndex === -1) {
-				throw createBusinessError("Item not found in cart");
+			if (!existingItem) {
+				// Check if the item exists in cart but with different variant
+				const existingVariants = cart.items
+					.filter((item) => item.itemId.toString() === itemId)
+					.map((item) => item.variantSku);
+
+				if (existingVariants.length > 0) {
+					throw createBusinessError(
+						`Variant ${currentVariantSku} not found in cart for this item. Available variants: ${existingVariants.join(
+							", "
+						)}`
+					);
+				} else {
+					throw createBusinessError("Item not found in cart");
+				}
 			}
 
 			// Get current quantity before any changes
-			const currentQuantity = cart.items[existingItemIndex].quantity;
+			const currentQuantity = existingItem.quantity;
 
 			// Validate item and new variant
 			const item = await this.validateItemAndVariant(
@@ -429,7 +474,13 @@ export default class CartService {
 				cart.items[newVariantIndex].updatedAt = new Date();
 
 				// Remove the old variant in a single operation
-				cart.items.splice(existingItemIndex, 1);
+				cart.items = cart.items.filter(
+					(item) =>
+						!(
+							item.itemId.toString() === itemId &&
+							item.variantSku === currentVariantSku
+						)
+				);
 
 				Logger.debug(
 					`Combined quantities for item ${itemId}, changing variant from ${currentVariantSku} to existing ${newVariantSku}`,
@@ -439,8 +490,8 @@ export default class CartService {
 				// Case: New variant doesn't exist - modify existing entry in place
 
 				// Update the current item entry with new variant details
-				cart.items[existingItemIndex].variantSku = newVariantSku;
-				cart.items[existingItemIndex].updatedAt = new Date();
+				existingItem.variantSku = newVariantSku;
+				existingItem.updatedAt = new Date();
 
 				Logger.debug(
 					`Changed variant from ${currentVariantSku} to ${newVariantSku} for item ${itemId}`,
@@ -466,18 +517,35 @@ export default class CartService {
 		const cart = await this.getOrCreateCart(userId);
 
 		// Find the item in the cart
-		const existingItemIndex = cart.items.findIndex(
+		const existingItem = cart.items.find(
 			(item) =>
 				item.itemId.toString() === itemId &&
 				item.variantSku === variantSku
 		);
 
-		if (existingItemIndex === -1) {
-			throw createBusinessError("Item not found in cart");
+		if (!existingItem) {
+			// Check if the item exists in cart but with different variant
+			const itemExists = cart.items.some(
+				(item) => item.itemId.toString() === itemId
+			);
+
+			if (itemExists) {
+				throw createBusinessError(
+					`Variant ${variantSku} not found in cart for this item`
+				);
+			} else {
+				throw createBusinessError("Item not found in cart");
+			}
 		}
 
 		// Remove the item
-		cart.items.splice(existingItemIndex, 1);
+		cart.items = cart.items.filter(
+			(item) =>
+				!(
+					item.itemId.toString() === itemId &&
+					item.variantSku === variantSku
+				)
+		);
 
 		// Save cart
 		await cart.save();
