@@ -581,12 +581,12 @@ export default class CartService {
 	static async syncCart(
 		userId: string,
 		forceSync: boolean = false,
-		itemIds?: string[] // Optional parameter to only sync specific items
+		itemIds?: string[]
 	): Promise<CartSyncResponse> {
 		// Start with transaction for consistency
 		return withTransaction(async (session) => {
 			const cart = await this.getOrCreateCart(userId, session);
-
+	
 			// Return empty data for empty cart
 			if (cart.items.length === 0) {
 				return {
@@ -595,20 +595,20 @@ export default class CartService {
 					itemDetails: [],
 				};
 			}
-
+	
 			// Check if we have a recent sync and if we're not forcing a sync
 			const now = new Date().getTime();
 			const SYNC_CACHE_TTL = 60000; // 1 minute in milliseconds
-
-			// Check cache invalidation flag
+	
+			// Check cache invalidation flag with proper null check
 			const cacheValid =
-				cart.lastSyncedAt &&
-				cart.syncData &&
+				cart.lastSyncedAt != null &&
+				cart.syncData != null &&
 				now - cart.lastSyncedAt.getTime() < SYNC_CACHE_TTL &&
 				!forceSync;
-
+	
 			// If specific itemIds are provided, we need to check if they're in the cached data
-			if (cacheValid && itemIds && itemIds.length > 0) {
+			if (cacheValid && itemIds && itemIds.length > 0 && cart.syncData) {
 				const cachedItemIds = new Set(
 					cart.syncData.itemDetails.map((detail: CartItemDetail) =>
 						detail.item._id.toString()
@@ -617,14 +617,14 @@ export default class CartService {
 				const allItemsInCache = itemIds.every((id) =>
 					cachedItemIds.has(id)
 				);
-
+	
 				// If all requested items are in cache, we can use the cached data
 				if (allItemsInCache) {
 					Logger.debug(
 						`Using cached sync data for user: ${userId} (partial sync)`,
 						"CartService"
 					);
-
+	
 					// If we only need specific items, filter the cache
 					if (itemIds.length < cachedItemIds.size) {
 						const filteredDetails =
@@ -632,37 +632,49 @@ export default class CartService {
 								(detail: CartItemDetail) =>
 									itemIds.includes(detail.item._id.toString())
 							);
-
+	
 						// Return filtered data with same totals
 						return {
-							...cart.syncData,
+							cart,
+							totals: cart.syncData.totals,
 							itemDetails: filteredDetails,
+							stockIssues: cart.syncData.stockIssues
 						};
 					}
-
-					return cart.syncData;
+	
+					return {
+						cart,
+						totals: cart.syncData.totals,
+						itemDetails: cart.syncData.itemDetails,
+						stockIssues: cart.syncData.stockIssues
+					};
 				}
-			} else if (cacheValid) {
+			} else if (cacheValid && cart.syncData) {
 				Logger.debug(
 					`Using cached sync data for user: ${userId}`,
 					"CartService"
 				);
-				return cart.syncData;
+				return {
+					cart,
+					totals: cart.syncData.totals,
+					itemDetails: cart.syncData.itemDetails,
+					stockIssues: cart.syncData.stockIssues
+				};
 			}
-
+	
 			// Get all item IDs in the cart or use the provided ones
 			const cartItemIds = cart.items.map((item) =>
 				item.itemId.toString()
 			);
 			const targetItemIds = itemIds || cartItemIds;
-
+	
 			// Create ObjectId references for lookup
 			const itemIdsToFetch = Array.from(
 				new Set(
 					targetItemIds.map((id) => new mongoose.Types.ObjectId(id))
 				)
 			);
-
+	
 			// Use lean queries and specific projections to reduce data transfer
 			const itemsData = await Item.aggregate([
 				{
@@ -679,13 +691,13 @@ export default class CartService {
 					},
 				},
 			]).session(session);
-
+	
 			// Create a map for faster lookups
 			const itemsMap = new Map();
 			itemsData.forEach((item) => {
 				itemsMap.set(item._id.toString(), item);
 			});
-
+	
 			let subtotal = 0;
 			const itemDetails: CartItemDetail[] = [];
 			const updatedCartItems: ICartItem[] = [];
@@ -697,42 +709,43 @@ export default class CartService {
 				actionRequired?: boolean;
 				recommendation?: string;
 			}> = [];
-
+	
 			// Process each cart item
 			for (const cartItem of cart.items) {
 				const itemId = cartItem.itemId.toString();
-
+	
 				// Skip items not in our target list if we're doing a partial sync
 				if (!targetItemIds.includes(itemId)) {
 					continue;
 				}
-
+	
 				const item = itemsMap.get(itemId);
-
+	
 				// Find the variant
 				const variant = item?.variants.find(
 					(v: any) => v.sku === cartItem.variantSku
 				);
-
+	
 				// Get detailed stock information
 				const stockInfo = this.getStockStatus(
 					item as IItem,
 					variant,
 					cartItem.quantity
 				);
-
-				// Calculate current price with discounts
+	
+				// Calculate current price with discounts - with NaN protection
 				let currentPrice = 0;
 				let discountPercentage = 0;
-
-				if (variant) {
+	
+				if (variant && typeof variant.price === 'number') {
 					currentPrice = variant.price;
-
+	
 					if (item && item.discount?.active) {
 						const now = new Date();
 						if (
 							now >= item.discount.startDate &&
-							now <= item.discount.endDate
+							now <= item.discount.endDate &&
+							typeof item.discount.percentage === 'number'
 						) {
 							discountPercentage = item.discount.percentage;
 							currentPrice = Math.round(
@@ -741,12 +754,12 @@ export default class CartService {
 						}
 					}
 				}
-
+	
 				// Determine if item is available for purchase
 				const isAvailable =
 					stockInfo.status === StockStatus.IN_STOCK ||
 					stockInfo.status === StockStatus.LOW_STOCK;
-
+	
 				// Track stock issues
 				if (
 					!isAvailable ||
@@ -756,19 +769,21 @@ export default class CartService {
 						itemId,
 						variantSku: cartItem.variantSku,
 						issue: stockInfo.message || "Stock issue detected",
+						severity: stockInfo.severity,
+						actionRequired: stockInfo.actionRequired || false,
+						recommendation: stockInfo.recommendation,
 					});
 				}
-
-				// Add to subtotal if available
-				const itemTotal = isAvailable
-					? currentPrice *
-					  Math.min(cartItem.quantity, stockInfo.currentQuantity)
+	
+				// Add to subtotal if available - with NaN protection
+				const itemTotal = isAvailable && !isNaN(currentPrice) && !isNaN(stockInfo.currentQuantity)
+					? currentPrice * Math.min(cartItem.quantity, stockInfo.currentQuantity)
 					: 0;
-
-				if (isAvailable) {
+	
+				if (isAvailable && !isNaN(itemTotal)) {
 					subtotal += itemTotal;
 				}
-
+	
 				// Add item to details with enhanced stock information
 				itemDetails.push({
 					item: {
@@ -779,16 +794,16 @@ export default class CartService {
 					},
 					variant: variant
 						? {
-								sku: variant.sku,
-								specifications: variant.specifications,
-								price: variant.price,
-								stockQuantity: variant.stockQuantity,
-								effectivePrice: currentPrice,
-								discountPercentage,
+							  sku: variant.sku,
+							  specifications: variant.specifications,
+							  price: variant.price,
+							  stockQuantity: variant.stockQuantity,
+							  effectivePrice: currentPrice,
+							  discountPercentage,
 						  }
 						: { sku: cartItem.variantSku },
 					quantity: cartItem.quantity,
-					itemTotal: isAvailable ? itemTotal : 0,
+					itemTotal: isAvailable && !isNaN(itemTotal) ? itemTotal : 0,
 					isAvailable,
 					hasChanged:
 						stockInfo.status !== StockStatus.IN_STOCK ||
@@ -802,47 +817,57 @@ export default class CartService {
 							stockInfo.requestedQuantity,
 					suggestedQuantity: stockInfo.adjustedQuantity,
 				});
-
+	
 				// Keep the item in the cart with possibly adjusted quantity
 				updatedCartItems.push({
 					...cartItem,
 				});
 			}
-
-			// Calculate totals
-			const totalItems = updatedCartItems.length;
-			const totalQuantity = updatedCartItems.reduce(
-				(sum, item) => sum + item.quantity,
+	
+			// Calculate totals - with NaN protection
+			const totalItems = !isNaN(updatedCartItems.length) ? updatedCartItems.length : 0;
+			const totalQuantity = !isNaN(updatedCartItems.reduce(
+				(sum, item) => sum + (isNaN(item.quantity) ? 0 : item.quantity),
 				0
-			);
-
+			)) ? updatedCartItems.reduce(
+				(sum, item) => sum + (isNaN(item.quantity) ? 0 : item.quantity),
+				0
+			) : 0;
+	
 			// Validate order value
-			const orderValueStatus = this.validateOrderValue(subtotal);
-
-			const result = {
-				cart,
+			const orderValueStatus = this.validateOrderValue(!isNaN(subtotal) ? subtotal : 0);
+	
+			// Create syncData object WITH NaN PROTECTION
+			const syncData = {
 				totals: {
-					subtotal,
-					totalItems,
-					totalQuantity,
-					isOrderBelowMinimum: orderValueStatus.belowMinimum,
-					isOrderAboveMaximum: orderValueStatus.aboveMaximum,
+					subtotal: isNaN(subtotal) ? 0 : subtotal,
+					totalItems: isNaN(totalItems) ? 0 : totalItems,
+					totalQuantity: isNaN(totalQuantity) ? 0 : totalQuantity,
+					isOrderBelowMinimum: orderValueStatus.belowMinimum || false,
+					isOrderAboveMaximum: orderValueStatus.aboveMaximum || false,
 					minimumOrderValue: CURRENCY_CONSTANTS.CART.MIN_ORDER_VALUE,
 					maximumOrderValue: CURRENCY_CONSTANTS.CART.MAX_ORDER_VALUE,
-					orderMessage: orderValueStatus.message,
+					orderMessage: orderValueStatus.message || '',
+					// Use nullish coalescing to provide a default value
+					shortfall: orderValueStatus.shortfall ?? 0,
+					excess: orderValueStatus.excess ?? 0,
 				},
 				itemDetails,
 				stockIssues: stockIssues.length > 0 ? stockIssues : undefined,
 			};
-
-			// Cache the sync result
+	
+			// Cache the sync result (without circular reference)
 			cart.lastSyncedAt = new Date();
-			cart.syncData = result;
+			cart.syncData = syncData;
 			await cart.save({ session });
-
+	
 			Logger.debug(`Synced cart for user: ${userId}`, "CartService");
-
-			return result;
+	
+			// Return complete result with the cart included
+			return {
+				cart,
+				...syncData
+			};
 		}, "CartService");
 	}
 

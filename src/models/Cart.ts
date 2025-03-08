@@ -1,6 +1,7 @@
 // src/models/Cart.ts
 import mongoose, { Document, Schema } from "mongoose";
 import { Logger } from "../services/logger.service";
+import { CartItemDetail } from "../types/cart.types";
 
 // Define the cart expiration period - 7 days
 const CART_EXPIRY_DAYS = 7;
@@ -13,12 +14,36 @@ export interface ICartItem {
 	updatedAt: Date;
 }
 
+export interface ISyncData {
+	totals: {
+	  subtotal: number;
+	  totalItems: number;
+	  totalQuantity: number;
+	  isOrderBelowMinimum?: boolean;
+	  isOrderAboveMaximum?: boolean;
+	  minimumOrderValue?: number;
+	  maximumOrderValue?: number;
+	  orderMessage?: string;
+	  shortfall?: number;
+	  excess?: number;
+	};
+	itemDetails: CartItemDetail[];
+	stockIssues?: Array<{
+	  itemId: string;
+	  variantSku: string;
+	  issue: string;
+	  severity?: "info" | "warning" | "error";
+	  actionRequired?: boolean;
+	  recommendation?: string;
+	}>;
+  }
+
 export interface ICart extends Document {
 	userId: mongoose.Types.ObjectId;
 	items: ICartItem[];
 	lastActivity: Date;
 	lastSyncedAt?: Date;
-	syncData?: any;
+	syncData?: ISyncData;
 	expires: Date;
 	createdAt: Date;
 	updatedAt: Date;
