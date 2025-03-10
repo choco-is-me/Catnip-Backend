@@ -5,6 +5,7 @@ import { CONFIG } from '../config';
 import { Logger } from '../services/logger.service';
 
 export type UserRole = 'user' | 'admin';
+export type UserGender = 'male' | 'female' | 'other';
 
 export interface IUser extends Document {
     _id: Types.ObjectId;
@@ -14,13 +15,9 @@ export interface IUser extends Document {
     lastName: string;
     company?: string;
     role: UserRole;
-    address: {
-        street: string;
-        city: string;
-        province: string;
-        zipCode: string;
-    };
     phoneNumber: string;
+    birthday?: Date;
+    gender?: UserGender;
     createdAt: Date;
     updatedAt: Date;
     comparePassword(candidatePassword: string): Promise<boolean>;
@@ -60,32 +57,23 @@ const UserSchema = new Schema<IUser>(
             default: 'user',
             required: true,
         },
-        address: {
-            street: {
-                type: String,
-                required: true,
-                trim: true,
-            },
-            city: {
-                type: String,
-                required: true,
-                trim: true,
-            },
-            province: {
-                type: String,
-                required: true,
-                trim: true,
-            },
-            zipCode: {
-                type: String,
-                required: true,
-                trim: true,
-            },
-        },
         phoneNumber: {
             type: String,
             required: true,
             trim: true,
+            validate: {
+                validator: function (v: string) {
+                    return /^(0[3|5|7|8|9])+([0-9]{8})$/.test(v);
+                },
+                message: 'Phone number must be a valid Vietnamese phone number',
+            },
+        },
+        birthday: {
+            type: Date,
+        },
+        gender: {
+            type: String,
+            enum: ['male', 'female', 'other'],
         },
     },
     {

@@ -1,6 +1,6 @@
 // src/schemas/users/user.schema.ts
 import { Type } from '@sinclair/typebox';
-import { AddressSchema, ResponseWrapper, Timestamps } from '../common';
+import { ResponseWrapper, Timestamps } from '../common';
 
 // Define Role enum
 export const UserRoleEnum = Type.Union(
@@ -8,6 +8,15 @@ export const UserRoleEnum = Type.Union(
     {
         description: 'User role type',
         examples: ['user'],
+    },
+);
+
+// Define Gender enum
+export const UserGenderEnum = Type.Union(
+    [Type.Literal('male'), Type.Literal('female'), Type.Literal('other')],
+    {
+        description: 'User gender',
+        examples: ['male'],
     },
 );
 
@@ -28,19 +37,20 @@ const UserBaseSchema = Type.Object({
         description: "User's last name",
         examples: ['Doe'],
     }),
-    company: Type.Optional(
+    role: UserRoleEnum,
+    phoneNumber: Type.String({
+        pattern: '^(0[3|5|7|8|9])+([0-9]{8})$',
+        description: 'Vietnamese phone number for account verification',
+        examples: ['0912345678'],
+    }),
+    birthday: Type.Optional(
         Type.String({
-            description: "User's company name if applicable",
-            examples: ['Acme Corp'],
+            format: 'date',
+            description: "User's birthday in YYYY-MM-DD format",
+            examples: ['1990-01-15'],
         }),
     ),
-    role: UserRoleEnum,
-    address: AddressSchema,
-    phoneNumber: Type.String({
-        pattern: '^[+]?[(]?[0-9]{3}[)]?[-s.]?[0-9]{3}[-s.]?[0-9]{4,6}$',
-        description: 'Phone number in international format',
-        examples: ['+1-234-567-8900', '(123) 456-7890'],
-    }),
+    gender: Type.Optional(UserGenderEnum),
 });
 
 // Complete user schema including system fields
@@ -98,13 +108,9 @@ const userExample = {
     firstName: 'John',
     lastName: 'Doe',
     role: 'user',
-    address: {
-        street: '123 Main St',
-        city: 'New York',
-        province: 'NY',
-        zipCode: '10001',
-    },
-    phoneNumber: '+1234567890',
+    phoneNumber: '0912345678',
+    birthday: '1990-01-15',
+    gender: 'male',
     createdAt: '2023-01-01T00:00:00.000Z',
     updatedAt: '2023-01-01T00:00:00.000Z',
 };

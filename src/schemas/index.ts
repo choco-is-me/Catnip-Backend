@@ -5,6 +5,7 @@ export * from './cards';
 export * from './cart';
 export * from './common';
 export * from './items';
+export * from './shipmentProfiles';
 export * from './suppliers';
 export * from './users';
 

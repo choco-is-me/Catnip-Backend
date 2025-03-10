@@ -5,6 +5,7 @@ import cardRoutes from './cards/cards.routes';
 import cartRoutes from './cart/cart.routes';
 import itemRoutes from './items/items.routes';
 import publicItemRoutes from './items/public.items.routes';
+import shipmentProfileRoutes from './shipment-profiles/shipment-profile.routes';
 import supplierRoutes from './suppliers/suppliers.routes';
 import userRoutes from './users/user.routes';
 
@@ -15,6 +16,9 @@ export default async function modifierRoutes(fastify: FastifyInstance) {
 
     // User routes (requires user role)
     await fastify.register(userRoutes, { prefix: '/users' });
+    await fastify.register(shipmentProfileRoutes, {
+        prefix: '/shipment-profiles',
+    });
     await fastify.register(cardRoutes, { prefix: '/cards' });
     await fastify.register(cartRoutes, { prefix: '/cart' });
 

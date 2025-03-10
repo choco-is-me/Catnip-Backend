@@ -71,9 +71,32 @@ export class UserHandler {
                     throw createBusinessError('No fields provided for update');
                 }
 
+                // Create a copy of the request body to modify
+                const updateData = { ...request.body };
+
+                // Handle birthday conversion if provided
+                if (updateData.birthday) {
+                    try {
+                        // Ensure the birthday is a valid date
+                        const birthdayDate = new Date(updateData.birthday);
+                        if (isNaN(birthdayDate.getTime())) {
+                            throw new Error('Invalid date format');
+                        }
+                        updateData.birthday = birthdayDate
+                            .toISOString()
+                            .split('T')[0]; // Convert to YYYY-MM-DD string
+                    } catch (error) {
+                        throw createError(
+                            400,
+                            ErrorTypes.VALIDATION_ERROR,
+                            'Invalid birthday format. Please use YYYY-MM-DD format.',
+                        );
+                    }
+                }
+
                 const updatedUser = await User.findByIdAndUpdate(
                     userId,
-                    { $set: request.body },
+                    { $set: updateData },
                     {
                         new: true,
                         session,
