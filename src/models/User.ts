@@ -146,13 +146,7 @@ async function createAdminUser() {
                 firstName: 'Admin',
                 lastName: 'SpaceCat',
                 role: 'admin',
-                address: {
-                    street: 'Admin Street',
-                    city: 'Admin City',
-                    province: 'Admin Province',
-                    zipCode: '12345',
-                },
-                phoneNumber: '+1234567890',
+                phoneNumber: '0912345678',
             });
 
             await adminUser.save();
