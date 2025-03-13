@@ -1,9 +1,9 @@
 // src/routes/v1/suppliers/handlers/suppliers.handler.ts
-import CartService from '../../../../services/cart.service';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import mongoose from 'mongoose';
 import { Item } from '../../../../models/Item';
 import { ISupplier, Supplier } from '../../../../models/Supplier';
+import CartService from '../../../../services/cart.service';
 import { Logger } from '../../../../services/logger.service';
 import {
     CommonErrors,

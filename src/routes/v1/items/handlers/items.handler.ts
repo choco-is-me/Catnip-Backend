@@ -1,5 +1,4 @@
 // src/routes/v1/items/handlers/item.handler.ts
-import CartService from '../../../../services/cart.service';
 import { Static } from '@sinclair/typebox';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import mongoose from 'mongoose';
@@ -16,6 +15,7 @@ import {
     BulkItemUpdateBody,
     ItemSortField,
 } from '../../../../schemas/items';
+import CartService from '../../../../services/cart.service';
 import { Logger } from '../../../../services/logger.service';
 import {
     CommonErrors,

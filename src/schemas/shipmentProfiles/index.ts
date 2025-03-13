@@ -53,7 +53,6 @@ export const ShipmentProfileBaseSchema = Type.Object({
     isDefault: Type.Optional(
         Type.Boolean({
             description: 'Whether this is the default shipping address',
-            default: false,
         }),
     ),
 });

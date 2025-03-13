@@ -124,35 +124,26 @@ export class ShipmentProfilesHandler {
                 const profileCount = await ShipmentProfile.countDocuments({
                     userId,
                 }).session(session);
+
                 if (profileCount >= 5) {
                     throw createBusinessError(
                         'Maximum number of shipment profiles (5) reached',
                     );
                 }
 
-                // Determine if this should be the default profile
-                const isDefault =
-                    profileCount === 0 ? true : request.body.isDefault || false;
-
-                // If setting as default, update any existing default profiles
-                if (isDefault) {
-                    await ShipmentProfile.updateMany(
-                        { userId, isDefault: true },
-                        { isDefault: false },
-                        { session },
-                    );
-                }
-
-                // Create the new profile
+                // Create the new profile - we let the model pre-save hook handle default logic
+                // This ensures consistent behavior across all operations
                 const shipmentProfile = new ShipmentProfile({
                     ...request.body,
                     userId,
-                    isDefault,
+                    // Use the provided default flag or false, first profile logic is in pre-save hook
+                    isDefault: request.body.isDefault || false,
                 });
 
                 await shipmentProfile.save({ session });
+
                 Logger.info(
-                    `Shipment profile created for user: ${userId}`,
+                    `Shipment profile created for user: ${userId}${shipmentProfile.isDefault ? ' (set as default)' : ''}`,
                     'ShipmentProfilesHandler',
                 );
 
@@ -198,7 +189,17 @@ export class ShipmentProfilesHandler {
             try {
                 const { profileId } = request.params;
                 const userId = request.user!.userId;
-                const updateData = request.body;
+
+                // Get the raw request payload to check if isDefault was actually sent
+                const rawPayload = request.body;
+                const rawKeys = Object.keys(rawPayload);
+                const wasIsDefaultExplicitlySent =
+                    rawKeys.includes('isDefault');
+
+                Logger.debug(
+                    `Original request keys: ${JSON.stringify(rawKeys)}`,
+                    'ShipmentProfilesHandler',
+                );
 
                 if (!mongoose.Types.ObjectId.isValid(profileId)) {
                     throw CommonErrors.invalidFormat('shipment profile ID');
@@ -218,39 +219,36 @@ export class ShipmentProfilesHandler {
                     );
                 }
 
-                // If setting as default, update any existing default profiles
-                if (updateData.isDefault) {
-                    await ShipmentProfile.updateMany(
-                        {
-                            userId,
-                            isDefault: true,
-                            _id: { $ne: profileId },
-                        },
-                        { isDefault: false },
-                        { session },
-                    );
+                // Create update object WITHOUT isDefault if it wasn't explicitly sent
+                const updateData: Record<string, any> = {};
+                for (const key of rawKeys) {
+                    if (key !== 'isDefault' || wasIsDefaultExplicitlySent) {
+                        updateData[key] =
+                            rawPayload[key as keyof typeof rawPayload];
+                    }
                 }
 
-                // Update the profile
-                const updatedProfile = await ShipmentProfile.findByIdAndUpdate(
-                    profileId,
-                    { $set: updateData },
-                    {
-                        new: true,
-                        runValidators: true,
-                        session,
-                    },
-                );
-
-                Logger.info(
-                    `Shipment profile updated: ${profileId}`,
+                Logger.debug(
+                    `Final update data: ${JSON.stringify(updateData)}`,
                     'ShipmentProfilesHandler',
                 );
+
+                // Apply updates to existing profile
+                Object.assign(existingProfile, updateData);
+
+                // Save the profile to trigger hooks
+                await existingProfile.save({ session });
+
+                const logMessage = wasIsDefaultExplicitlySent
+                    ? `Shipment profile updated: ${profileId}${updateData.isDefault ? ' (set as default)' : ' (default status explicitly set to false)'}`
+                    : `Shipment profile updated: ${profileId}`;
+
+                Logger.info(logMessage, 'ShipmentProfilesHandler');
 
                 return reply.code(200).send({
                     success: true,
                     data: {
-                        shipmentProfile: updatedProfile,
+                        shipmentProfile: existingProfile,
                     },
                 });
             } catch (error) {
@@ -275,7 +273,7 @@ export class ShipmentProfilesHandler {
         }, 'ShipmentProfilesHandler');
     }
 
-    // Delete a shipment profile
+    // Delete a shipment profile - Optimized implementation
     async deleteProfile(
         request: FastifyRequest<{
             Params: { profileId: string };
@@ -295,7 +293,7 @@ export class ShipmentProfilesHandler {
                 const existingProfile = await ShipmentProfile.findOne({
                     _id: profileId,
                     userId,
-                }).session(session);
+                }).session(session).lean();
 
                 if (!existingProfile) {
                     throw createError(
@@ -305,37 +303,74 @@ export class ShipmentProfilesHandler {
                     );
                 }
 
-                const wasDefault = existingProfile.isDefault;
+                // Check how many profiles the user has
+                const profileCount = await ShipmentProfile.countDocuments({
+                    userId,
+                }).session(session);
 
-                // Delete the profile
-                await ShipmentProfile.findByIdAndDelete(profileId).session(
-                    session,
-                );
-
-                // If this was the default profile, set another profile as default
-                let newDefault = null;
-                if (wasDefault) {
-                    const anotherProfile =
-                        await ShipmentProfile.findOneAndUpdate(
-                            { userId },
-                            { isDefault: true },
-                            {
-                                new: true,
-                                session,
-                                sort: { createdAt: -1 },
-                            },
-                        ).select('_id receiverName');
-
-                    if (anotherProfile) {
-                        newDefault = {
-                            _id: anotherProfile._id,
-                            receiverName: anotherProfile.receiverName,
-                        };
+                // FAST PATH: If this is the user's last profile, use direct deletion to bypass hooks
+                if (profileCount === 1) {
+                    Logger.debug(
+                        `FAST PATH: Deleting the last shipment profile for user ${userId}`,
+                        'ShipmentProfilesHandler'
+                    );
+                    
+                    // Check if database connection is established
+                    if (!mongoose.connection.db) {
+                        throw new Error('Database connection is not established');
                     }
+                    
+                    // Use direct deleteOne to bypass all hooks and middleware
+                    const deleteResult = await mongoose.connection.db.collection('shipmentprofiles')
+                        .deleteOne({ _id: new mongoose.Types.ObjectId(profileId) });
+                    
+                    if (deleteResult.deletedCount === 0) {
+                        throw createError(
+                            404,
+                            ErrorTypes.NOT_FOUND,
+                            'Profile could not be deleted or was already removed'
+                        );
+                    }
+                    
+                    Logger.info(
+                        `Fast path deletion completed for the last shipment profile: ${profileId}`,
+                        'ShipmentProfilesHandler'
+                    );
+                    
+                    return reply.code(200).send({
+                        success: true,
+                        data: {
+                            message: 'Shipment profile deleted successfully (fast path)',
+                            isDefault: existingProfile.isDefault,
+                        },
+                    });
+                }
+                
+                // NORMAL PATH: Handle deletion when user has multiple profiles
+                
+                // Check if this is a default profile with multiple profiles
+                if (existingProfile.isDefault && profileCount > 1) {
+                    throw createBusinessError(
+                        'Cannot delete default shipping profile. Please set another profile as default first.',
+                    );
+                }
+
+                // Delete using findOneAndDelete to properly trigger hooks
+                const deletedProfile = await ShipmentProfile.findOneAndDelete({
+                    _id: profileId,
+                    userId,
+                }).session(session);
+
+                if (!deletedProfile) {
+                    throw createError(
+                        404, 
+                        ErrorTypes.NOT_FOUND,
+                        'Profile could not be deleted or was already removed'
+                    );
                 }
 
                 Logger.info(
-                    `Shipment profile deleted: ${profileId}`,
+                    `Shipment profile deleted: ${profileId} (was${deletedProfile.isDefault ? '' : ' not'} default)`,
                     'ShipmentProfilesHandler',
                 );
 
@@ -343,8 +378,7 @@ export class ShipmentProfilesHandler {
                     success: true,
                     data: {
                         message: 'Shipment profile deleted successfully',
-                        isDefault: wasDefault,
-                        newDefault: newDefault || undefined,
+                        isDefault: deletedProfile.isDefault,
                     },
                 });
             } catch (error) {
@@ -411,46 +445,26 @@ export class ShipmentProfilesHandler {
                     isDefault: true,
                 }).session(session);
 
-                // Update the current default profile
-                let previousDefault = null;
-                if (currentDefault) {
-                    await ShipmentProfile.findByIdAndUpdate(
-                        currentDefault._id,
-                        { isDefault: false },
-                        { session },
-                    );
+                // Update using the model instance to ensure pre-save hooks are triggered
+                existingProfile.isDefault = true;
+                await existingProfile.save({ session });
 
-                    previousDefault = {
-                        _id: currentDefault._id,
-                        isDefault: false,
-                    };
-                }
-
-                // Set the new default profile
-                const updatedProfile = await ShipmentProfile.findByIdAndUpdate(
-                    profileId,
-                    { isDefault: true },
-                    {
-                        new: true,
-                        session,
-                    },
-                );
-
-                Logger.info(
-                    `Shipment profile set as default: ${profileId}`,
-                    'ShipmentProfilesHandler',
-                );
-
+                // Return a more detailed response
                 return reply.code(200).send({
                     success: true,
                     data: {
                         message:
                             'Default shipping address updated successfully',
                         updatedProfile: {
-                            _id: updatedProfile!._id,
+                            _id: existingProfile._id,
                             isDefault: true,
                         },
-                        previousDefault: previousDefault || undefined,
+                        previousDefault: currentDefault
+                            ? {
+                                  _id: currentDefault._id,
+                                  isDefault: false,
+                              }
+                            : undefined,
                     },
                 });
             } catch (error) {

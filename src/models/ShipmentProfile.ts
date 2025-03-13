@@ -95,8 +95,9 @@ ShipmentProfileSchema.pre('save', async function (next) {
             }
         }
 
-        // If this profile is being set as default, update all other profiles for this user
-        if (this.isDefault) {
+        // If this profile is being set as default, ensure other profiles are not default
+        // Only do this update if this profile is marked as default and is being modified
+        if (this.isDefault && (this.isNew || this.isModified('isDefault'))) {
             await mongoose.models.ShipmentProfile.updateMany(
                 {
                     userId: this.userId,
@@ -106,6 +107,11 @@ ShipmentProfileSchema.pre('save', async function (next) {
                     isDefault: false,
                 },
             );
+
+            Logger.debug(
+                `Setting profile ${this._id} as default and removing default status from other profiles`,
+                'ShipmentProfile',
+            );
         }
 
         next();
@@ -114,19 +120,37 @@ ShipmentProfileSchema.pre('save', async function (next) {
     }
 });
 
-// Ensure at least one profile is default if others exist
+// Optimized post-delete hook for better performance when handling the final profile
 ShipmentProfileSchema.post('findOneAndDelete', async function (doc) {
     try {
+        // Only proceed if the deleted profile was default
         if (doc && doc.isDefault) {
-            const remainingProfiles =
-                await mongoose.models.ShipmentProfile.find({
+            // Use a more efficient count query first to check if any profiles remain
+            const remainingCount =
+                await mongoose.models.ShipmentProfile.countDocuments({
                     userId: doc.userId,
-                });
+                }).limit(1);
 
-            if (remainingProfiles.length > 0) {
-                await mongoose.models.ShipmentProfile.findByIdAndUpdate(
-                    remainingProfiles[0]._id,
-                    { isDefault: true },
+            if (remainingCount > 0) {
+                // Find and update another profile to be default in one efficient operation
+                const result =
+                    await mongoose.models.ShipmentProfile.findOneAndUpdate(
+                        { userId: doc.userId },
+                        { isDefault: true },
+                        { new: true },
+                    );
+
+                if (result) {
+                    Logger.debug(
+                        `Set profile ${result._id} as default after deleting default profile ${doc._id}`,
+                        'ShipmentProfile',
+                    );
+                }
+            } else {
+                // No profiles left - log and exit quickly
+                Logger.debug(
+                    `No profiles left for user ${doc.userId} after deleting the last profile`,
+                    'ShipmentProfile',
                 );
             }
         }

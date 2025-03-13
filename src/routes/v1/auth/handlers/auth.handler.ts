@@ -103,9 +103,7 @@ export class AuthHandler {
                 email: user.email,
                 firstName: user.firstName,
                 lastName: user.lastName,
-                company: user.company,
-                role: user.role, // Include role in response
-                address: user.address,
+                role: user.role,
                 phoneNumber: user.phoneNumber,
                 createdAt: user.createdAt.toISOString(),
                 updatedAt: user.updatedAt.toISOString(),
