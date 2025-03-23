@@ -91,7 +91,7 @@ export const CONFIG: Config = {
     JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
     LOG_LEVEL: (process.env.LOG_LEVEL as Config['LOG_LEVEL']) || 'info',
     LOG_REQUESTS: process.env.LOG_REQUESTS === 'true',
-    CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+    CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',
     UPLOAD_DIR: process.env.UPLOAD_DIR || './uploads',
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY!,
     ENCRYPTION_IV: process.env.ENCRYPTION_IV!,

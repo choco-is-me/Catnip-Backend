@@ -89,7 +89,21 @@ export async function buildServer(): Promise<FastifyInstance> {
 
         // Register CORS
         await server.register(import('@fastify/cors'), {
-            origin: CONFIG.CORS_ORIGIN,
+            origin: (origin, cb) => {
+                // Allow requests with no origin (like mobile apps, curl, etc)
+                if (!origin) return cb(null, true);
+
+                const allowedOrigins = CONFIG.CORS_ORIGIN.split(',');
+                if (
+                    allowedOrigins.includes(origin) ||
+                    allowedOrigins.includes('*')
+                ) {
+                    return cb(null, true);
+                }
+
+                return cb(new Error('Not allowed by CORS'), false);
+            },
+            credentials: true,
         });
 
         // Register rate limiting
