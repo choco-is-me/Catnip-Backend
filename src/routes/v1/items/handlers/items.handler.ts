@@ -22,6 +22,8 @@ import {
     createBusinessError,
 } from '../../../../utils/error-handler';
 import { withTransaction } from '../../../../utils/transaction.utils';
+import { normalizeImageData } from '../../../../utils/image-utils';
+import { deleteCloudinaryImages } from '../../../../utils/cloudinary-utils';
 
 export class ItemHandler {
     // Validation methods as static
@@ -394,8 +396,14 @@ export class ItemHandler {
                         }
                     }
 
+                    // Normalize image data to ensure proper format
+                    const normalizedImages = normalizeImageData(
+                        itemData.images,
+                    );
+
                     preparedItems.push({
                         ...itemData,
+                        images: normalizedImages, // Use normalized images
                         discount: itemData.discount
                             ? {
                                   ...itemData.discount,
@@ -530,8 +538,16 @@ export class ItemHandler {
                             if (
                                 update[key as keyof typeof update] !== undefined
                             ) {
-                                updateData[key] =
-                                    update[key as keyof typeof update];
+                                // Special handling for images to normalize the format
+                                if (key === 'images') {
+                                    // Handle the case where images might be undefined
+                                    updateData[key] = normalizeImageData(
+                                        update.images,
+                                    );
+                                } else {
+                                    updateData[key] =
+                                        update[key as keyof typeof update];
+                                }
                             }
                         });
                     }
@@ -1022,6 +1038,12 @@ export class ItemHandler {
             throw CommonErrors.itemNotFound();
         }
 
+        // Ensure images are in the correct format
+        // This is for backward compatibility with existing data
+        if (item.images) {
+            item.images = normalizeImageData(item.images);
+        }
+
         return reply.send({
             success: true,
             data: { item },
@@ -1043,6 +1065,35 @@ export class ItemHandler {
             const item = await Item.findById(itemId).session(session);
             if (!item) {
                 throw CommonErrors.itemNotFound();
+            }
+
+            // NEW CODE: Clean up Cloudinary images if we have publicIds
+            const imagePublicIds = item.images
+                .filter((img) => img.publicId)
+                .map((img) => img.publicId as string);
+
+            if (imagePublicIds.length > 0) {
+                try {
+                    const deleteResults =
+                        await deleteCloudinaryImages(imagePublicIds);
+                    Logger.info(
+                        `Deleted ${deleteResults.success.length} Cloudinary images for item ${itemId}`,
+                        'ItemHandler',
+                    );
+
+                    if (deleteResults.failed.length > 0) {
+                        Logger.warn(
+                            `Failed to delete ${deleteResults.failed.length} Cloudinary images: ${deleteResults.failed.join(', ')}`,
+                            'ItemHandler',
+                        );
+                    }
+                } catch (err) {
+                    Logger.warn(
+                        `Error cleaning up Cloudinary images for item ${itemId}: ${err}`,
+                        'ItemHandler',
+                    );
+                    // Continue with deletion even if image cleanup fails
+                }
             }
 
             if (item.numberOfSales > 0) {
@@ -1554,12 +1605,17 @@ export class ItemHandler {
 
             // Remove debug info for production responses
             const responseItems = items.map((item) => {
+                // Handle any legacy image formats in the response
+                if (item.images) {
+                    item.images = normalizeImageData(item.images);
+                }
+
+                // Existing code to remove debug info
                 if (!isDevelopment) {
-                    // Remove debug info in production
                     const { _searchDebug, ...cleanItem } = item;
                     return {
                         ...cleanItem,
-                        highlights: item.highlights || undefined, // Include search highlights when available
+                        highlights: item.highlights || undefined,
                     };
                 }
                 return item;

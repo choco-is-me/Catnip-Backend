@@ -21,6 +21,9 @@ const ConfigSchema = Type.Object({
     PORT: Type.Number(),
     HOST: Type.String(),
     MONGODB_URI: Type.String(),
+    CLOUDINARY_CLOUD_NAME: Type.String(),
+    CLOUDINARY_API_KEY: Type.String(),
+    CLOUDINARY_API_SECRET: Type.String(),
     COOKIE_SECRET: Type.String(),
     COOKIE_DOMAIN: Type.Optional(Type.String()),
     COOKIE_SECURE: Type.Optional(Type.Boolean()),
@@ -46,6 +49,9 @@ const ConfigSchema = Type.Object({
 // Validate required environment variables
 const requiredEnvVars = [
     'MONGODB_URI',
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
     'COOKIE_SECRET',
     'JWT_SECRET',
     'JWT_REFRESH_SECRET',
@@ -78,6 +84,9 @@ export const CONFIG: Config = {
     PORT: parseInt(process.env.PORT || '3000', 10),
     HOST: process.env.HOST || '0.0.0.0',
     MONGODB_URI: process.env.MONGODB_URI!,
+    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME!,
+    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY!,
+    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET!,
     COOKIE_SECRET: process.env.COOKIE_SECRET!,
     COOKIE_DOMAIN:
         process.env.NODE_ENV === 'production'

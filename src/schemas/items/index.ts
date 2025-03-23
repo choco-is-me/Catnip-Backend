@@ -116,6 +116,28 @@ export const DiscountSchema = Type.Object(
     },
 );
 
+// Define schema for Cloudinary image data
+export const ImageDataSchema = Type.Object(
+    {
+        url: Type.String({
+            format: 'uri',
+            description: 'Image URL',
+            examples: [
+                'https://res.cloudinary.com/djf6nbycc/image/upload/v1/sample.jpg',
+            ],
+        }),
+        publicId: Type.Optional(
+            Type.String({
+                description: 'Cloudinary public ID for image management',
+                examples: ['folder/sample'],
+            }),
+        ),
+    },
+    {
+        description: 'Image data with Cloudinary metadata',
+    },
+);
+
 const ItemBaseSchema = Type.Object({
     name: Type.String({
         minLength: 1,
@@ -127,13 +149,18 @@ const ItemBaseSchema = Type.Object({
         description: 'Item description',
         examples: ['High-quality cotton t-shirt with premium finish'],
     }),
-    images: Type.Array(
-        Type.String({
-            format: 'uri',
-            description: 'Image URL',
-            examples: ['https://example.com/images/tshirt-1.jpg'],
-        }),
-    ),
+    images: Type.Array(ImageDataSchema, {
+        description:
+            'Array of image data objects with URLs and optional Cloudinary metadata',
+        examples: [
+            [
+                {
+                    url: 'https://res.cloudinary.com/djf6nbycc/image/upload/v1/tshirt-1.jpg',
+                    publicId: 'products/tshirt-1',
+                },
+            ],
+        ],
+    }),
     tags: Type.Array(
         Type.String({
             description: 'Item categories and tags',
@@ -422,7 +449,12 @@ export const BulkCreateItemResponse = ResponseWrapper(
                             name: 'Premium Cotton T-Shirt',
                             description:
                                 'High-quality cotton t-shirt with premium finish',
-                            images: ['https://example.com/images/tshirt-1.jpg'],
+                            images: [
+                                {
+                                    url: 'https://res.cloudinary.com/djf6nbycc/image/upload/v1/tshirt-1.jpg',
+                                    publicId: 'products/tshirt-1',
+                                },
+                            ],
                             tags: ['clothing', 't-shirt', 'premium'],
                             variants: [
                                 {
@@ -487,6 +519,12 @@ export const BulkItemUpdateResponse = ResponseWrapper(
                             _id: '507f1f77bcf86cd799439011',
                             name: 'Updated Item Name',
                             description: 'Updated description',
+                            images: [
+                                {
+                                    url: 'https://res.cloudinary.com/djf6nbycc/image/upload/v1/updated-item.jpg',
+                                    publicId: 'products/updated-item',
+                                },
+                            ],
                             variants: [
                                 {
                                     sku: 'ITEM-001',

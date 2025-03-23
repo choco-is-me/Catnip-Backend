@@ -29,11 +29,17 @@ export interface IDiscount {
     active: boolean;
 }
 
+// Interface for Cloudinary image data
+export interface IImageData {
+    url: string;
+    publicId?: string;
+}
+
 // Main Item interface
 export interface IItem extends Document {
     name: string;
     description: string;
-    images: string[];
+    images: IImageData[];
     tags: string[];
     variants: IVariant[];
     supplier: mongoose.Types.ObjectId;
@@ -125,6 +131,20 @@ const DiscountSchema = new Schema(
     { _id: false },
 );
 
+// Schema for Cloudinary image data
+const ImageDataSchema = new Schema(
+    {
+        url: {
+            type: String,
+            required: true,
+        },
+        publicId: {
+            type: String,
+        },
+    },
+    { _id: false },
+);
+
 const ItemSchema = new Schema<IItem>(
     {
         name: {
@@ -138,12 +158,7 @@ const ItemSchema = new Schema<IItem>(
             required: true,
             trim: true,
         },
-        images: [
-            {
-                type: String,
-                required: true,
-            },
-        ],
+        images: [ImageDataSchema],
         tags: [
             {
                 type: String,
