@@ -15,7 +15,7 @@ export interface ISpecification {
 // Interface for variant with improved stock tracking
 export interface IVariant {
     sku: string;
-    specifications: ISpecification;
+    specifications?: ISpecification;
     price: number;
     stockQuantity: number;
     lowStockThreshold?: number;
@@ -64,7 +64,11 @@ const VariantSchema = new Schema(
             required: true,
             trim: true,
         },
-        specifications: SpecificationSchema,
+        specifications: {
+            type: SpecificationSchema,
+            required: false, // Make it not required
+            default: {}, // Default to empty object
+        },
         price: {
             type: Number,
             required: true,

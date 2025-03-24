@@ -41,7 +41,7 @@ export const VariantSchema = Type.Object(
             description: 'Stock Keeping Unit',
             examples: ['SHIRT-BLU-XL'],
         }),
-        specifications: ItemSpecificationSchema,
+        specifications: Type.Optional(ItemSpecificationSchema),
         price: Type.Number({
             minimum: CURRENCY_CONSTANTS.ITEM.MIN_PRICE,
             maximum: CURRENCY_CONSTANTS.ITEM.MAX_PRICE,

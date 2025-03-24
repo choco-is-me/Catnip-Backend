@@ -293,7 +293,9 @@ export class ShipmentProfilesHandler {
                 const existingProfile = await ShipmentProfile.findOne({
                     _id: profileId,
                     userId,
-                }).session(session).lean();
+                })
+                    .session(session)
+                    .lean();
 
                 if (!existingProfile) {
                     throw createError(
@@ -312,42 +314,48 @@ export class ShipmentProfilesHandler {
                 if (profileCount === 1) {
                     Logger.debug(
                         `FAST PATH: Deleting the last shipment profile for user ${userId}`,
-                        'ShipmentProfilesHandler'
+                        'ShipmentProfilesHandler',
                     );
-                    
+
                     // Check if database connection is established
                     if (!mongoose.connection.db) {
-                        throw new Error('Database connection is not established');
+                        throw new Error(
+                            'Database connection is not established',
+                        );
                     }
-                    
+
                     // Use direct deleteOne to bypass all hooks and middleware
-                    const deleteResult = await mongoose.connection.db.collection('shipmentprofiles')
-                        .deleteOne({ _id: new mongoose.Types.ObjectId(profileId) });
-                    
+                    const deleteResult = await mongoose.connection.db
+                        .collection('shipmentprofiles')
+                        .deleteOne({
+                            _id: new mongoose.Types.ObjectId(profileId),
+                        });
+
                     if (deleteResult.deletedCount === 0) {
                         throw createError(
                             404,
                             ErrorTypes.NOT_FOUND,
-                            'Profile could not be deleted or was already removed'
+                            'Profile could not be deleted or was already removed',
                         );
                     }
-                    
+
                     Logger.info(
                         `Fast path deletion completed for the last shipment profile: ${profileId}`,
-                        'ShipmentProfilesHandler'
+                        'ShipmentProfilesHandler',
                     );
-                    
+
                     return reply.code(200).send({
                         success: true,
                         data: {
-                            message: 'Shipment profile deleted successfully (fast path)',
+                            message:
+                                'Shipment profile deleted successfully (fast path)',
                             isDefault: existingProfile.isDefault,
                         },
                     });
                 }
-                
+
                 // NORMAL PATH: Handle deletion when user has multiple profiles
-                
+
                 // Check if this is a default profile with multiple profiles
                 if (existingProfile.isDefault && profileCount > 1) {
                     throw createBusinessError(
@@ -363,9 +371,9 @@ export class ShipmentProfilesHandler {
 
                 if (!deletedProfile) {
                     throw createError(
-                        404, 
+                        404,
                         ErrorTypes.NOT_FOUND,
-                        'Profile could not be deleted or was already removed'
+                        'Profile could not be deleted or was already removed',
                     );
                 }
 

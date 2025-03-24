@@ -1236,11 +1236,6 @@ export class ItemHandler {
                 // Create a cleaned search term
                 const cleanedSearch = search.trim().toLowerCase();
 
-                // Tokenize the search query for more granular matching
-                const searchTokens = cleanedSearch
-                    .split(/\s+/)
-                    .filter((token) => token.length > 1);
-
                 pipeline.push(
                     {
                         $search: {
@@ -1318,17 +1313,6 @@ export class ItemHandler {
                         variants: {
                             $elemMatch: {
                                 stockQuantity: inStock ? { $gt: 0 } : 0,
-                            },
-                        },
-                    },
-                });
-            } else {
-                // By default we only show in-stock items
-                pipeline.push({
-                    $match: {
-                        variants: {
-                            $elemMatch: {
-                                stockQuantity: { $gt: 0 },
                             },
                         },
                     },
