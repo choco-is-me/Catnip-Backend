@@ -1,7 +1,7 @@
 // src/services/jwt.service.ts
 import crypto from 'crypto';
 import { FastifyRequest } from 'fastify';
-import { sign, verify } from 'jsonwebtoken';
+import { sign, verify, SignOptions, JwtPayload, Secret } from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import { CONFIG } from '../config';
 import { IDeviceInfo, InvalidatedToken, TokenFamily } from '../models/Token';
@@ -295,14 +295,14 @@ class JWTService {
             }
 
             const secret = isRefresh
-                ? CONFIG.JWT_REFRESH_SECRET
-                : CONFIG.JWT_SECRET;
+                ? (CONFIG.JWT_REFRESH_SECRET as Secret)
+                : (CONFIG.JWT_SECRET as Secret);
             const decoded = verify(token, secret, {
                 algorithms: ['HS256'],
                 issuer: this.JWT_OPTIONS.issuer,
                 audience: this.JWT_OPTIONS.audience,
                 complete: true,
-            }) as any;
+            } as any) as any;
 
             const payload = decoded.payload as TokenPayload & { jti: string };
 
@@ -418,14 +418,14 @@ class JWTService {
                     iat: now,
                     familyId,
                 },
-                CONFIG.JWT_SECRET,
+                CONFIG.JWT_SECRET as Secret,
                 {
                     ...this.JWT_OPTIONS,
                     expiresIn: CONFIG.JWT_EXPIRES_IN,
                     algorithm: 'HS256',
                     jwtid: accessJti,
                     subject: userId,
-                },
+                } as SignOptions,
             );
 
             const refreshToken = sign(
@@ -436,14 +436,14 @@ class JWTService {
                     iat: now,
                     familyId,
                 },
-                CONFIG.JWT_REFRESH_SECRET,
+                CONFIG.JWT_REFRESH_SECRET as Secret,
                 {
                     ...this.JWT_OPTIONS,
                     expiresIn: CONFIG.JWT_REFRESH_EXPIRES_IN,
                     algorithm: 'HS256',
                     jwtid: refreshJti,
                     subject: userId,
-                },
+                } as SignOptions,
             );
 
             return { accessToken, refreshToken };
