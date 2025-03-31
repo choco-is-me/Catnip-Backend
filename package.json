@@ -36,7 +36,6 @@
         "@fastify/type-provider-typebox": "^5.1.0",
         "@sinclair/typebox": "^0.34.13",
         "bcrypt": "^5.1.1",
-        "catnip-app-backend": "file:",
         "chalk": "^4.1.2",
         "cloudinary": "^2.6.0",
         "dotenv": "^16.4.7",
@@ -59,5 +58,11 @@
         "ts-jest": "^29.2.5",
         "ts-node": "^10.9.2",
         "typescript": "^5.8.2"
+    },
+    "overrides": {
+        "glob": "^11.0.1",
+        "rimraf": "^6.0.1",
+        "npmlog": "^7.0.1",
+        "gauge": "^5.0.2"
     }
 }
